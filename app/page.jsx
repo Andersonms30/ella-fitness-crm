@@ -637,9 +637,10 @@ function SalesList({sales,customers,installments,storeId,toast,products}){
 }
 
 // ── Due Dates ─────────────────────────────────────────────────
-function DueDates({installments,customers,storeName,toast}){
+function DueDates({installments,customers,storeName,toast,sales}){
   const [filter,setFilter]=useState("all");const [cFil,setCFil]=useState("");
-  const allPend=installments.filter(i=>!i.paid).sort((a,b)=>a.due_date.localeCompare(b.due_date));
+  const cancelledSaleIds=new Set((sales||[]).filter(s=>s.cancelled).map(s=>s.id));
+  const allPend=installments.filter(i=>!i.paid&&!cancelledSaleIds.has(i.sale_id)).sort((a,b)=>a.due_date.localeCompare(b.due_date));
   const weekEnd=new Date();weekEnd.setDate(weekEnd.getDate()+7);const we=weekEnd.toISOString().slice(0,10);
   const filtered=allPend.filter(i=>{
     if(cFil&&i.customer_id!==cFil)return false;
@@ -832,7 +833,8 @@ function CashFlow({sales,costs,installments}){
   const [month,setMonth]=useState(TODAY().slice(0,7));
   const mSales=sales.filter(s=>s.date.startsWith(month)&&!s.cancelled);
   const mCosts=costs.filter(c=>c.ref_month===month);
-  const mInst=installments.filter(i=>i.paid&&i.paid_at?.startsWith(month));
+  const cancelledIds=new Set(sales.filter(s=>s.cancelled).map(s=>s.id));
+  const mInst=installments.filter(i=>i.paid&&i.paid_at?.startsWith(month)&&!cancelledIds.has(i.sale_id));
   const totalIn=mInst.reduce((a,i)=>a+Number(i.amount),0);
   const totalOut=mCosts.reduce((a,c)=>a+Number(c.amount),0);
   const balance=totalIn-totalOut;
@@ -1053,7 +1055,7 @@ export default function Page(){
     <Dashboard sales={sales} products={products} customers={customers} costs={costs} installments={installments} storeSettings={storeSettings}/>,
     <NewSale products={products} customers={customers} storeId={storeId} toast={toast} allInstallments={installments}/>,
     <SalesList sales={sales} customers={customers} installments={installments} storeId={storeId} toast={toast} products={products}/>,
-    <DueDates installments={installments} customers={customers} storeName={storeName} toast={toast}/>,
+    <DueDates installments={installments} customers={customers} storeName={storeName} toast={toast} sales={sales}/>,
     <Customers customers={customers} sales={sales} installments={installments} storeId={storeId} storeName={storeName} toast={toast}/>,
     <Products products={products} storeId={storeId} toast={toast}/>,
     <Costs costs={costs} customers={customers} storeId={storeId} toast={toast}/>,

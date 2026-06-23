@@ -1066,11 +1066,12 @@ export default function Page(){
   return(<div style={{minHeight:"100vh",background:G.bg,fontFamily:"system-ui,'Segoe UI',sans-serif",color:G.text}}>
     <style>{`@keyframes spin{to{transform:rotate(360deg)}}*{box-sizing:border-box}::-webkit-scrollbar{width:4px;height:4px}::-webkit-scrollbar-thumb{background:${G.bord2};border-radius:4px}`}</style>
     <div style={{background:"#0b0b1799",backdropFilter:"blur(14px)",borderBottom:`1px solid ${G.bord}`,padding:"10px 16px",display:"flex",alignItems:"center",gap:12,position:"sticky",top:0,zIndex:300}}>
-      <div style={{width:36,height:36,borderRadius:9,flexShrink:0,overflow:"hidden",background:`linear-gradient(135deg,${G.pink},${G.violet})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:17}}>
-        {storeSettings?.logo_url?<img src={storeSettings.logo_url} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>:"👗"}
-      </div>
+      {storeSettings?.logo_url
+        ? <img src={storeSettings.logo_url} style={{height:44,maxWidth:160,objectFit:"contain",flexShrink:0,borderRadius:6}} alt="logo"/>
+        : <div style={{width:36,height:36,borderRadius:9,flexShrink:0,background:`linear-gradient(135deg,${G.pink},${G.violet})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:17}}>👗</div>
+      }
       <div style={{flex:1}}>
-        <div style={{fontWeight:900,fontSize:14,background:`linear-gradient(90deg,${G.pink},${G.violet})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>{storeName}</div>
+        {!storeSettings?.logo_url&&<div style={{fontWeight:900,fontSize:14,background:`linear-gradient(90deg,${G.pink},${G.violet})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>{storeName}</div>}
         {storeSettings?.owner_name&&<div style={{color:G.muted,fontSize:10}}>{storeSettings.owner_name}</div>}
       </div>
       <RTBadge connected={rtOk}/>

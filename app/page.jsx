@@ -13,7 +13,7 @@ import {
 
 // ── CONFIGURE AQUI ────────────────────────────────────────────
 const SUPABASE_URL = "https://sxwjyvpqsprwthyqtjzy.supabase.co";
-const SUPABASE_KEY = "sb_publishable_j6F1AdpN9B9OUNBUXoFmOA_R-Sjh_Wn";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN4d2p5dnBxc3Byd3RoeXF0anp5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIxNTgxMjQsImV4cCI6MjA5NzczNDEyNH0.XnNgcXtLjol_-51JN74H9WztMUsDTuAChwFgIaRKqUQ";
 // ─────────────────────────────────────────────────────────────
 
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);

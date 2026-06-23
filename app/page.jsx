@@ -319,7 +319,7 @@ function Products({products,storeId,toast}){
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:6}}>
               <span style={{color:p.stock<=3?G.red:G.muted,fontSize:12}}>Est: {p.stock}</span>
               <div style={{display:"flex",gap:4}}>
-                <button onClick={()=>{setStockOpen(p);setStockEntry({qty:"",cost:"",note:""));}} style={{background:`${G.green}22`,border:`1px solid ${G.green}44`,color:G.green,borderRadius:6,padding:"3px 7px",fontSize:11,cursor:"pointer",fontWeight:700}}>+Est</button>
+                <button onClick={()=>{setStockOpen(p);setStockEntry({qty:"",cost:"",note:""});}} style={{background:`${G.green}22`,border:`1px solid ${G.green}44`,color:G.green,borderRadius:6,padding:"3px 7px",fontSize:11,cursor:"pointer",fontWeight:700}}>+Est</button>
                 <Btn small variant="ghost" onClick={()=>openEdit(p)}>✏️</Btn>
                 <Btn small variant="danger" onClick={()=>del(p.id)}>✕</Btn>
               </div>
@@ -740,4 +740,348 @@ function CustomerProfile({cust,sales,installments,storeName,toast,onBack}){
     </div>}
     {tab==="pagos"&&<div style={{display:"flex",flexDirection:"column",gap:7}}>
       {paid.length===0&&<Card><div style={{color:G.muted,textAlign:"center",padding:24}}>Nenhum pagamento.</div></Card>}
-      {paid.sort((a,b)=>b.paid_at?.localeCompare(a.paid_at||"")).map((i,idx)=><InstRow key={idx} inst={i} onUnpay={unpayInst} showWA={false}/
+      {paid.sort((a,b)=>b.paid_at?.localeCompare(a.paid_at||"")).map((i,idx)=><InstRow key={idx} inst={i} onUnpay={unpayInst} showWA={false}/>)}
+    </div>}
+    {tab==="vencidos"&&<div style={{display:"flex",flexDirection:"column",gap:7}}>
+      {overdue.length===0&&<Card style={{borderColor:G.green+"44"}}><div style={{color:G.green,textAlign:"center",padding:24}}>✅ Nenhuma parcela vencida!</div></Card>}
+      {overdue.sort((a,b)=>a.due_date.localeCompare(b.due_date)).map((i,idx)=><InstRow key={idx} inst={i} custName={cust.name} custPhone={cust.phone} onPay={payInst} storeName={storeName}/>)}
+      {overdue.length>0&&cust.phone&&<button onClick={()=>{overdue.forEach(i=>window.open(waLink(cust.phone,cust.name,i.number,i.amount,i.due_date,storeName,true),"_blank"));toast("WhatsApp aberto!");}} style={{display:"flex",alignItems:"center",gap:6,background:"#25D36618",border:"1px solid #25D36640",color:"#25D366",borderRadius:8,padding:"8px 14px",fontSize:13,cursor:"pointer",fontWeight:700}}>📱 Cobrar todas via WhatsApp</button>}
+    </div>}
+    {tab==="avencer"&&<div style={{display:"flex",flexDirection:"column",gap:7}}>
+      {upcoming.length===0&&<Card><div style={{color:G.muted,textAlign:"center",padding:24}}>Nenhuma parcela a vencer.</div></Card>}
+      {upcoming.sort((a,b)=>a.due_date.localeCompare(b.due_date)).map((i,idx)=><InstRow key={idx} inst={i} custName={cust.name} custPhone={cust.phone} onPay={payInst} storeName={storeName}/>)}
+    </div>}
+  </div>);
+}
+
+function Customers({customers,sales,installments,storeId,storeName,toast}){
+  const [open,setOpen]=useState(false);const [selected,setSelected]=useState(null);const [edit,setEdit]=useState(null);
+  const [f,setF]=useState({name:"",phone:"",email:"",notes:"",birthday:"",category:"regular",photo_url:""});
+  const [q,setQ]=useState("");const [saving,setSaving]=useState(false);const [catFil,setCatFil]=useState("");
+  const openNew=()=>{setF({name:"",phone:"",email:"",notes:"",birthday:"",category:"regular",photo_url:""});setEdit(null);setOpen(true);};
+  const openEdit=c=>{setF({name:c.name,phone:c.phone||"",email:c.email||"",notes:c.notes||"",birthday:c.birthday||"",category:c.category||"regular",photo_url:c.photo_url||""});setEdit(c);setOpen(true);};
+  const save=async()=>{
+    if(!f.name){toast("Nome é obrigatório","#f87171");return;}
+    setSaving(true);
+    const d={name:f.name,phone:f.phone,email:f.email,notes:f.notes,birthday:f.birthday||null,category:f.category,photo_url:f.photo_url||"",store_id:storeId};
+    const{error}=edit?await sb.from("customers").update(d).eq("id",edit.id):await sb.from("customers").insert(d);
+    if(error)toast("Erro: "+error.message,"#f87171");else{toast(edit?"Cliente atualizada!":"Cliente cadastrada!");setOpen(false);}
+    setSaving(false);
+  };
+  const del=async id=>{await sb.from("customers").delete().eq("id",id);toast("Removida","#f87171");};
+  if(selected)return <CustomerProfile cust={selected} sales={sales} installments={installments} storeName={storeName} toast={toast} onBack={()=>setSelected(null)}/>;
+  const today=new Date();const todayStr=`${String(today.getMonth()+1).padStart(2,"0")}-${String(today.getDate()).padStart(2,"0")}`;
+  const list=customers.filter(c=>{if(catFil&&c.category!==catFil)return false;return c.name.toLowerCase().includes(q.toLowerCase())||c.phone?.includes(q);});
+  return(<div style={{display:"flex",flexDirection:"column",gap:12}}>
+    <div style={{display:"flex",gap:9}}><Inp placeholder="🔍 Buscar cliente..." value={q} onChange={e=>setQ(e.target.value)} style={{flex:1}}/><Btn onClick={openNew} variant="pink">+ Cliente</Btn></div>
+    <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+      <button onClick={()=>setCatFil("")} style={{padding:"4px 11px",borderRadius:20,border:"none",background:!catFil?G.pink:"#ffffff0e",color:!catFil?"#fff":G.muted,fontSize:12,cursor:"pointer",fontWeight:!catFil?700:400}}>Todas</button>
+      {Object.entries(CUST_CATS).map(([k,v])=><button key={k} onClick={()=>setCatFil(k)} style={{padding:"4px 11px",borderRadius:20,border:"none",background:catFil===k?(CUST_CAT_COLORS[k]||G.pink):"#ffffff0e",color:catFil===k?"#fff":G.muted,fontSize:12,cursor:"pointer",fontWeight:catFil===k?700:400}}>{v}</button>)}
+    </div>
+    {list.map(c=>{
+      const cs=sales.filter(s=>s.customer_id===c.id&&!s.cancelled);
+      const spent=cs.reduce((a,s)=>a+Number(s.total),0);
+      const pendInst=installments.filter(i=>i.customer_id===c.id&&!i.paid);
+      const pendVal=pendInst.reduce((a,i)=>a+Number(i.amount),0);
+      const hasOverdue=pendInst.some(i=>i.due_date<TODAY());
+      const isBirthday=c.birthday&&c.birthday.slice(5)===todayStr;
+      return(<Card key={c.id} onClick={()=>setSelected(c)} style={{cursor:"pointer",borderColor:hasOverdue?G.red+"44":isBirthday?G.amber+"44":G.bord}}>
+        <div style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
+          <div style={{display:"flex",gap:11,alignItems:"center"}}>
+            <div style={{width:44,height:44,borderRadius:"50%",flexShrink:0,background:`linear-gradient(135deg,${G.pink},${G.violet})`,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:15,color:"#fff",overflow:"hidden"}}>
+              {c.photo_url?<img src={c.photo_url} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>:INI(c.name)}
+            </div>
+            <div>
+              <div style={{fontWeight:700,fontSize:15,display:"flex",alignItems:"center",gap:6}}>{c.name}{isBirthday&&<span>🎂</span>}{c.category&&<Badge color={CUST_CAT_COLORS[c.category]||G.pink}>{CUST_CATS[c.category]||c.category}</Badge>}</div>
+              {c.phone&&<div style={{color:G.muted,fontSize:12}}>📞 {c.phone}</div>}
+            </div>
+          </div>
+          <div style={{textAlign:"right"}}>
+            <div style={{color:G.pink,fontWeight:800,fontSize:16}}>{R(spent)}</div>
+            <div style={{color:G.muted,fontSize:12}}>{cs.length} compras</div>
+            {pendVal>0&&<div style={{marginTop:3}}><Badge color={hasOverdue?G.red:G.amber}>A receber: {R(pendVal)}</Badge></div>}
+          </div>
+        </div>
+        <div style={{marginTop:10,display:"flex",gap:7}} onClick={e=>e.stopPropagation()}>
+          <Btn small variant="ghost" onClick={()=>openEdit(c)}>✏️ Editar</Btn>
+          <Btn small variant="danger" onClick={()=>del(c.id)}>✕</Btn>
+          <Btn small variant="pink" onClick={()=>setSelected(c)}>Ver perfil →</Btn>
+        </div>
+      </Card>);
+    })}
+    {open&&<Modal title={edit?"Editar Cliente":"Nova Cliente"} onClose={()=>setOpen(false)}>
+      <div style={{display:"flex",flexDirection:"column",gap:11}}>
+        <PhotoUpload value={f.photo_url} onChange={v=>setF({...f,photo_url:v})} height={90}/>
+        <Inp label="Nome *" value={f.name} onChange={e=>setF({...f,name:e.target.value})} placeholder="Nome completo"/>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+          <Inp label="Telefone (com DDI)" value={f.phone} onChange={e=>setF({...f,phone:e.target.value})} placeholder="5511999990000"/>
+          <Inp label="Aniversário" type="date" value={f.birthday} onChange={e=>setF({...f,birthday:e.target.value})}/>
+        </div>
+        <Inp label="E-mail" value={f.email} onChange={e=>setF({...f,email:e.target.value})} placeholder="email@exemplo.com"/>
+        <Sel label="Categoria" value={f.category} onChange={e=>setF({...f,category:e.target.value})}>
+          {Object.entries(CUST_CATS).map(([k,v])=><option key={k} value={k}>{v}</option>)}
+        </Sel>
+        <TA label="Observações" value={f.notes} onChange={e=>setF({...f,notes:e.target.value})} placeholder="Tamanho preferido, gostos..."/>
+        <div style={{display:"flex",gap:9,marginTop:4}}><Btn full onClick={save} variant="pink" disabled={saving}>{saving?<Spin/>:"Salvar"}</Btn><Btn full variant="ghost" onClick={()=>setOpen(false)}>Cancelar</Btn></div>
+      </div>
+    </Modal>}
+  </div>);
+}
+
+function CashFlow({sales,costs,installments}){
+  const [month,setMonth]=useState(TODAY().slice(0,7));
+  const mSales=sales.filter(s=>s.date.startsWith(month)&&!s.cancelled);
+  const mCosts=costs.filter(c=>c.ref_month===month);
+  const mInst=installments.filter(i=>i.paid&&i.paid_at?.startsWith(month));
+  const totalIn=mInst.reduce((a,i)=>a+Number(i.amount),0);
+  const totalOut=mCosts.reduce((a,c)=>a+Number(c.amount),0);
+  const balance=totalIn-totalOut;
+  const days=[];for(let d=1;d<=31;d++){const ds=`${month}-${String(d).padStart(2,"0")}`;const daySales=mSales.filter(s=>s.date===ds);if(daySales.length>0)days.push({day:String(d),entradas:+daySales.reduce((a,s)=>a+Number(s.total),0).toFixed(2)});}
+  return(<div style={{display:"flex",flexDirection:"column",gap:14}}>
+    <Inp label="Mês" type="month" value={month} onChange={e=>setMonth(e.target.value)}/>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+      <Card style={{borderLeft:`3px solid ${G.green}`}}><div style={{color:G.muted,fontSize:10,textTransform:"uppercase"}}>Entradas</div><div style={{color:G.green,fontWeight:800,fontSize:16,marginTop:4}}>{R(totalIn)}</div></Card>
+      <Card style={{borderLeft:`3px solid ${G.red}`}}><div style={{color:G.muted,fontSize:10,textTransform:"uppercase"}}>Saídas</div><div style={{color:G.red,fontWeight:800,fontSize:16,marginTop:4}}>{R(totalOut)}</div></Card>
+      <Card style={{borderLeft:`3px solid ${balance>=0?G.green:G.red}`}}><div style={{color:G.muted,fontSize:10,textTransform:"uppercase"}}>Saldo</div><div style={{color:balance>=0?G.green:G.red,fontWeight:800,fontSize:16,marginTop:4}}>{R(balance)}</div></Card>
+    </div>
+    {days.length>0&&<Card>
+      <div style={{fontWeight:700,marginBottom:12,fontSize:14}}>📊 Entradas por dia</div>
+      <ResponsiveContainer width="100%" height={140}>
+        <BarChart data={days} margin={{top:4,right:4,left:-24,bottom:0}}>
+          <XAxis dataKey="day" tick={{fill:G.muted,fontSize:10}} axisLine={false} tickLine={false}/>
+          <YAxis tick={{fill:G.muted,fontSize:10}} axisLine={false} tickLine={false}/>
+          <Tooltip formatter={v=>R(v)} contentStyle={{background:G.surf,border:`1px solid ${G.bord}`,borderRadius:8,fontSize:12}}/>
+          <Bar dataKey="entradas" fill={G.green} radius={[4,4,0,0]}/>
+        </BarChart>
+      </ResponsiveContainer>
+    </Card>}
+    <Card>
+      <div style={{fontWeight:700,marginBottom:10,fontSize:14}}>💸 Saídas do mês</div>
+      {mCosts.length===0?<div style={{color:G.muted,fontSize:13}}>Nenhum custo lançado para este mês.</div>:mCosts.map(c=>(
+        <div key={c.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+          <div><div style={{fontSize:13}}>{c.name}</div><div style={{color:G.muted,fontSize:11}}>{c.type==="fixed"?"Fixo":"Variável"}</div></div>
+          <span style={{color:G.red,fontWeight:700}}>{R(c.amount)}</span>
+        </div>
+      ))}
+    </Card>
+  </div>);
+}
+
+function Reports({sales,products,customers,installments,costs,storeName}){
+  const [month,setMonth]=useState(TODAY().slice(0,7));
+  const mSales=sales.filter(s=>s.date.startsWith(month)&&!s.cancelled);
+  const rev=mSales.reduce((a,s)=>a+Number(s.total),0);
+  const cogs=mSales.reduce((a,s)=>a+s.items.reduce((b,i)=>b+Number(i.cost_price)*i.quantity,0),0);
+  const mCosts=costs.filter(c=>c.ref_month===month).reduce((a,c)=>a+Number(c.amount),0);
+  const profit=rev-cogs-mCosts;
+  const prodMap={};mSales.forEach(s=>s.items.forEach(it=>{if(!prodMap[it.product_name])prodMap[it.product_name]={qty:0,rev:0};prodMap[it.product_name].qty+=it.quantity;prodMap[it.product_name].rev+=it.quantity*Number(it.unit_price);}));
+  const topProds=Object.entries(prodMap).sort((a,b)=>b[1].qty-a[1].qty).slice(0,10);
+  const printReport=()=>{
+    const w=window.open("","_blank");
+    w.document.write(`<html><head><title>Relatório ${fmtMonth(month+"-01")}</title><style>body{font-family:sans-serif;padding:20px;color:#333}h1,h2{color:#7c3aed}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ddd;padding:8px;text-align:left}th{background:#f3f0ff}.total{font-weight:bold;font-size:16px;color:#7c3aed}</style></head><body>
+    <h1>📊 ${storeName} — Relatório ${fmtMonth(month+"-01")}</h1>
+    <h2>Resumo Financeiro</h2>
+    <table><tr><th>Indicador</th><th>Valor</th></tr>
+    <tr><td>Faturamento</td><td>${R(rev)}</td></tr>
+    <tr><td>CMV</td><td>${R(cogs)}</td></tr>
+    <tr><td>Margem bruta</td><td>${R(rev-cogs)} (${rev?(((rev-cogs)/rev)*100).toFixed(1):0}%)</td></tr>
+    <tr><td>Outros custos</td><td>${R(mCosts)}</td></tr>
+    <tr><td class="total">Lucro líquido</td><td class="total">${R(profit)}</td></tr></table>
+    <h2>Top Produtos</h2>
+    <table><tr><th>Produto</th><th>Qtd</th><th>Receita</th></tr>
+    ${topProds.map(([n,{qty,rev}])=>`<tr><td>${n}</td><td>${qty}</td><td>${R(rev)}</td></tr>`).join("")}
+    </table>
+    <p style="color:#999;font-size:12px;margin-top:20px">Gerado em ${new Date().toLocaleString("pt-BR")}</p>
+    </body></html>`);w.print();
+  };
+  return(<div style={{display:"flex",flexDirection:"column",gap:14}}>
+    <div style={{display:"flex",gap:9,alignItems:"flex-end"}}>
+      <Inp label="Mês do relatório" type="month" value={month} onChange={e=>setMonth(e.target.value)} style={{flex:1}}/>
+      <Btn onClick={printReport} variant="pink">🖨️ Imprimir PDF</Btn>
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:10}}>
+      {[["Faturamento",R(rev),G.pink],["Margem bruta",R(rev-cogs),G.violet],["Outros custos",R(mCosts),G.amber],["Lucro líquido",R(profit),profit>=0?G.green:G.red]].map(([l,v,col])=>(
+        <Card key={l} style={{borderLeft:`3px solid ${col}`,padding:"12px 13px"}}><div style={{color:G.muted,fontSize:10,textTransform:"uppercase"}}>{l}</div><div style={{color:col,fontWeight:800,fontSize:15,marginTop:4}}>{v}</div></Card>
+      ))}
+    </div>
+    <Card>
+      <div style={{fontWeight:700,marginBottom:10,fontSize:14}}>🏆 Top produtos do mês</div>
+      {topProds.length===0?<div style={{color:G.muted,fontSize:13}}>Sem vendas no mês.</div>:topProds.map(([name,{qty,rev}],i)=>(
+        <div key={name} style={{display:"flex",alignItems:"center",gap:9,marginBottom:8}}>
+          <div style={{width:24,height:24,borderRadius:"50%",background:PAL[i%PAL.length],display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,color:"#fff",flexShrink:0}}>{i+1}</div>
+          <div style={{flex:1}}><div style={{fontSize:13,fontWeight:600}}>{name}</div><div style={{fontSize:11,color:G.muted}}>{qty} unidades</div></div>
+          <span style={{color:PAL[i%PAL.length],fontWeight:700,fontSize:13}}>{R(rev)}</span>
+        </div>
+      ))}
+    </Card>
+  </div>);
+}
+
+function Settings({storeId,storeName,toast,onSignOut,storeSettings,onSettingsUpdate}){
+  const [f,setF]=useState({name:storeName||"",logo_url:storeSettings?.logo_url||"",owner_name:storeSettings?.owner_name||"",owner_phone:storeSettings?.owner_phone||"",owner_email:storeSettings?.owner_email||"",address:storeSettings?.address||"",cnpj:storeSettings?.cnpj||"",monthly_goal:storeSettings?.monthly_goal||""});
+  const [saving,setSaving]=useState(false);
+  const save=async()=>{
+    setSaving(true);
+    await sb.from("stores").update({name:f.name,logo_url:f.logo_url,owner_name:f.owner_name,owner_phone:f.owner_phone,owner_email:f.owner_email,address:f.address,cnpj:f.cnpj,monthly_goal:+f.monthly_goal||0}).eq("id",storeId);
+    onSettingsUpdate({...f,monthly_goal:+f.monthly_goal||0});
+    toast("Configurações salvas! ✓");setSaving(false);
+  };
+  return(<div style={{display:"flex",flexDirection:"column",gap:14}}>
+    <Card>
+      <div style={{fontWeight:700,fontSize:15,marginBottom:14}}>🏪 Dados da loja</div>
+      <div style={{display:"flex",flexDirection:"column",gap:11}}>
+        <div style={{display:"flex",gap:14,alignItems:"flex-start"}}>
+          <div style={{width:100,flexShrink:0}}>
+            <span style={{color:G.muted,fontSize:11,textTransform:"uppercase",letterSpacing:.8,display:"block",marginBottom:5}}>Logo</span>
+            <PhotoUpload value={f.logo_url} onChange={v=>setF({...f,logo_url:v})} height={80}/>
+          </div>
+          <div style={{flex:1,display:"flex",flexDirection:"column",gap:11}}>
+            <Inp label="Nome da loja *" value={f.name} onChange={e=>setF({...f,name:e.target.value})}/>
+            <Inp label="CNPJ / CPF" value={f.cnpj} onChange={e=>setF({...f,cnpj:e.target.value})} placeholder="00.000.000/0001-00"/>
+          </div>
+        </div>
+        <Inp label="Endereço" value={f.address} onChange={e=>setF({...f,address:e.target.value})} placeholder="Rua, número, bairro, cidade"/>
+      </div>
+    </Card>
+    <Card>
+      <div style={{fontWeight:700,fontSize:15,marginBottom:14}}>👤 Dados do proprietário</div>
+      <div style={{display:"flex",flexDirection:"column",gap:11}}>
+        <Inp label="Nome completo" value={f.owner_name} onChange={e=>setF({...f,owner_name:e.target.value})}/>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+          <Inp label="Telefone / WhatsApp" value={f.owner_phone} onChange={e=>setF({...f,owner_phone:e.target.value})} placeholder="5511999990000"/>
+          <Inp label="E-mail" value={f.owner_email} onChange={e=>setF({...f,owner_email:e.target.value})}/>
+        </div>
+      </div>
+    </Card>
+    <Card>
+      <div style={{fontWeight:700,fontSize:15,marginBottom:14}}>🎯 Meta de vendas mensal</div>
+      <Inp label="Meta mensal (R$)" value={f.monthly_goal} onChange={e=>setF({...f,monthly_goal:e.target.value})} type="number" min="0" step="100" placeholder="Ex: 5000"/>
+    </Card>
+    <Btn full onClick={save} variant="pink" disabled={saving} style={{padding:"12px 0",fontSize:15}}>{saving?<Spin/>:"💾 Salvar configurações"}</Btn>
+    <Btn variant="danger" onClick={onSignOut} style={{alignSelf:"flex-start"}}>Sair da conta</Btn>
+  </div>);
+}
+
+function AuthScreen({onAuth}){
+  const [mode,setMode]=useState("login");const [email,setEmail]=useState("");const [pass,setPass]=useState("");
+  const [store,setStore]=useState("");const [err,setErr]=useState("");const [loading,setLoad]=useState(false);
+  const submit=async()=>{
+    setErr("");setLoad(true);
+    try{
+      if(mode==="login"){const{data,error}=await sb.auth.signInWithPassword({email,password:pass});if(error)throw error;onAuth(data.user);}
+      else{if(!store.trim())throw new Error("Nome da loja é obrigatório");const{data,error}=await sb.auth.signUp({email,password:pass});if(error)throw error;const{data:sd,error:sErr}=await sb.from("stores").insert({name:store,owner_email:email}).select().single();if(sErr)throw sErr;await sb.from("store_users").insert({store_id:sd.id,user_id:data.user.id,role:"owner"});onAuth(data.user);}
+    }catch(e){setErr(e.message||"Erro desconhecido");}
+    setLoad(false);
+  };
+  return(<div style={{minHeight:"100vh",background:G.bg,display:"flex",alignItems:"center",justifyContent:"center",padding:16,fontFamily:"system-ui,sans-serif"}}>
+    <div style={{width:"100%",maxWidth:400}}>
+      <div style={{textAlign:"center",marginBottom:32}}>
+        <div style={{fontSize:44,marginBottom:8}}>👗</div>
+        <div style={{fontSize:26,fontWeight:900,background:`linear-gradient(90deg,${G.pink},${G.violet})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Fitness CRM</div>
+        <div style={{color:G.muted,fontSize:13,marginTop:4}}>Sistema de gestão para lojas fitness</div>
+      </div>
+      <Card style={{display:"flex",flexDirection:"column",gap:14}}>
+        <div style={{display:"flex",gap:0,background:G.bg,borderRadius:10,padding:3}}>
+          {[["login","Entrar"],["register","Criar conta"]].map(([k,l])=>(
+            <button key={k} onClick={()=>{setMode(k);setErr("");}} style={{flex:1,padding:"8px 0",borderRadius:8,border:"none",background:mode===k?`linear-gradient(135deg,${G.pink},${G.violet})`:"transparent",color:mode===k?"#fff":G.muted,fontWeight:mode===k?700:400,fontSize:13,cursor:"pointer"}}>{l}</button>
+          ))}
+        </div>
+        {mode==="register"&&<Inp label="Nome da loja" value={store} onChange={e=>setStore(e.target.value)} placeholder="Ex: Ella Fitness"/>}
+        <Inp label="E-mail" type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="seu@email.com"/>
+        <Inp label="Senha" type="password" value={pass} onChange={e=>setPass(e.target.value)} placeholder="••••••••" onKeyDown={e=>e.key==="Enter"&&submit()}/>
+        {err&&<div style={{color:G.red,fontSize:12,background:`${G.red}12`,borderRadius:8,padding:"8px 12px"}}>{err}</div>}
+        <Btn full variant="pink" onClick={submit} disabled={loading} style={{padding:"12px 0",fontSize:15}}>{loading?<Spin/>:mode==="login"?"Entrar":"Criar conta"}</Btn>
+      </Card>
+      <div style={{textAlign:"center",color:G.muted,fontSize:11,marginTop:16}}>Dados armazenados com segurança via Supabase</div>
+    </div>
+  </div>);
+}
+
+const TABS=[{l:"Dashboard",i:"📊"},{l:"Nova Venda",i:"🛒"},{l:"Vendas",i:"🧾"},{l:"Vencimentos",i:"📅"},{l:"Clientes",i:"👤"},{l:"Produtos",i:"👗"},{l:"Custos",i:"💸"},{l:"Caixa",i:"💵"},{l:"Relatórios",i:"📋"},{l:"Config",i:"⚙️"}];
+
+export default function Page(){
+  const [user,setUser]=useState(null);const [storeId,setStoreId]=useState(null);
+  const [storeName,setSName]=useState("Fitness CRM");const [storeSettings,setStoreSettings]=useState({});
+  const [loading,setLoading]=useState(true);const [rtOk,setRtOk]=useState(false);
+  const [tab,setTab]=useState(0);const [tn,setTn]=useState({msg:"",col:G.green});
+  const [products,setProducts]=useState([]);const [customers,setCustomers]=useState([]);
+  const [sales,setSales]=useState([]);const [installments,setInstallments]=useState([]);
+  const [costs,setCosts]=useState([]);
+  const toast=useCallback((msg,col=G.violet)=>{setTn({msg,col});setTimeout(()=>setTn({msg:"",col:G.violet}),2800);},[]);
+  useEffect(()=>{
+    sb.auth.getSession().then(({data:{session}})=>{if(session?.user)initStore(session.user);else setLoading(false);});
+    const{data:{subscription}}=sb.auth.onAuthStateChange((_,session)=>{if(session?.user)initStore(session.user);else{setUser(null);setStoreId(null);setLoading(false);}});
+    return()=>subscription.unsubscribe();
+  },[]);
+  const initStore=async u=>{
+    setUser(u);
+    const{data}=await sb.from("store_users").select("store_id,stores(*)").eq("user_id",u.id).single();
+    if(data){setStoreId(data.store_id);setSName(data.stores?.name||"Fitness CRM");setStoreSettings(data.stores||{});}
+    setLoading(false);
+  };
+  useEffect(()=>{if(!storeId)return;loadAll();const cleanup=setupRealtime();return cleanup;},[storeId]);
+  const loadAll=async()=>{
+    const[p,c,s,i,co]=await Promise.all([
+      sb.from("products").select("*").eq("store_id",storeId).eq("active",true).order("name"),
+      sb.from("customers").select("*").eq("store_id",storeId).order("name"),
+      sb.from("sales").select("*,sale_items(*)").eq("store_id",storeId).order("date",{ascending:false}),
+      sb.from("installments").select("*").eq("store_id",storeId).order("due_date"),
+      sb.from("costs").select("*").eq("store_id",storeId).order("created_at",{ascending:false}),
+    ]);
+    if(p.data)setProducts(p.data);
+    if(c.data)setCustomers(c.data);
+    if(s.data)setSales(s.data.map(sale=>({...sale,items:sale.sale_items||[]})));
+    if(i.data)setInstallments(i.data);
+    if(co.data)setCosts(co.data);
+  };
+  const setupRealtime=()=>{
+    const ch=sb.channel(`store-${storeId}`)
+      .on("postgres_changes",{event:"*",schema:"public",table:"products",filter:`store_id=eq.${storeId}`},()=>loadAll())
+      .on("postgres_changes",{event:"*",schema:"public",table:"customers",filter:`store_id=eq.${storeId}`},()=>loadAll())
+      .on("postgres_changes",{event:"*",schema:"public",table:"sales",filter:`store_id=eq.${storeId}`},()=>loadAll())
+      .on("postgres_changes",{event:"*",schema:"public",table:"sale_items"},()=>loadAll())
+      .on("postgres_changes",{event:"*",schema:"public",table:"installments",filter:`store_id=eq.${storeId}`},()=>loadAll())
+      .on("postgres_changes",{event:"*",schema:"public",table:"costs",filter:`store_id=eq.${storeId}`},()=>loadAll())
+      .on("postgres_changes",{event:"*",schema:"public",table:"stores"},()=>loadAll())
+      .subscribe(s=>{setRtOk(s==="SUBSCRIBED");});
+    return()=>sb.removeChannel(ch);
+  };
+  const handleSignOut=async()=>{await sb.auth.signOut();setUser(null);setStoreId(null);setSales([]);setProducts([]);setCustomers([]);setInstallments([]);setCosts([]);};
+  if(loading)return(<div style={{minHeight:"100vh",background:G.bg,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"system-ui,sans-serif"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:12}}>👗</div><div style={{color:G.pink,fontWeight:700}}>Carregando...</div></div></div>);
+  if(!user)return <AuthScreen onAuth={u=>initStore(u)}/>;
+  const panels=[
+    <Dashboard sales={sales} products={products} customers={customers} costs={costs} installments={installments} storeSettings={storeSettings}/>,
+    <NewSale products={products} customers={customers} storeId={storeId} toast={toast} allInstallments={installments}/>,
+    <SalesList sales={sales} customers={customers} installments={installments} storeId={storeId} toast={toast} products={products}/>,
+    <DueDates installments={installments} customers={customers} storeName={storeName} toast={toast}/>,
+    <Customers customers={customers} sales={sales} installments={installments} storeId={storeId} storeName={storeName} toast={toast}/>,
+    <Products products={products} storeId={storeId} toast={toast}/>,
+    <Costs costs={costs} customers={customers} storeId={storeId} toast={toast}/>,
+    <CashFlow sales={sales} costs={costs} installments={installments}/>,
+    <Reports sales={sales} products={products} customers={customers} installments={installments} costs={costs} storeName={storeName}/>,
+    <Settings storeId={storeId} storeName={storeName} toast={toast} onSignOut={handleSignOut} storeSettings={storeSettings} onSettingsUpdate={s=>{setStoreSettings(s);setSName(s.name);}}/>,
+  ];
+  return(<div style={{minHeight:"100vh",background:G.bg,fontFamily:"system-ui,'Segoe UI',sans-serif",color:G.text}}>
+    <style>{`@keyframes spin{to{transform:rotate(360deg)}}*{box-sizing:border-box}::-webkit-scrollbar{width:4px;height:4px}::-webkit-scrollbar-thumb{background:${G.bord2};border-radius:4px}`}</style>
+    <div style={{background:"#0b0b1799",backdropFilter:"blur(14px)",borderBottom:`1px solid ${G.bord}`,padding:"10px 16px",display:"flex",alignItems:"center",gap:12,position:"sticky",top:0,zIndex:300}}>
+      <div style={{width:36,height:36,borderRadius:9,flexShrink:0,overflow:"hidden",background:`linear-gradient(135deg,${G.pink},${G.violet})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:17}}>
+        {storeSettings?.logo_url?<img src={storeSettings.logo_url} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>:"👗"}
+      </div>
+      <div style={{flex:1}}>
+        <div style={{fontWeight:900,fontSize:14,background:`linear-gradient(90deg,${G.pink},${G.violet})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>{storeName}</div>
+        {storeSettings?.owner_name&&<div style={{color:G.muted,fontSize:10}}>{storeSettings.owner_name}</div>}
+      </div>
+      <RTBadge connected={rtOk}/>
+      <div style={{color:G.muted,fontSize:11,maxWidth:100,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{user.email}</div>
+    </div>
+    <div style={{display:"flex",overflowX:"auto",gap:1,padding:"7px 10px",borderBottom:`1px solid ${G.bord}`,background:G.bg,scrollbarWidth:"none"}}>
+      {TABS.map((t,i)=>(
+        <button key={i} onClick={()=>setTab(i)} style={{flexShrink:0,display:"flex",alignItems:"center",gap:4,padding:"6px 10px",borderRadius:8,border:"none",background:tab===i?`${G.pink}20`:"transparent",color:tab===i?G.pink:G.muted,fontWeight:tab===i?700:400,fontSize:12,cursor:"pointer",borderBottom:tab===i?`2px solid ${G.pink}`:"2px solid transparent",whiteSpace:"nowrap"}}>
+          <span>{t.i}</span><span>{t.l}</span>
+        </button>
+      ))}
+    </div>
+    <div style={{padding:"14px 14px 60px",maxWidth:740,margin:"0 auto"}}>{panels[tab]}</div>
+    <Toast msg={tn.msg} color={tn.col}/>
+  </div>);
+}

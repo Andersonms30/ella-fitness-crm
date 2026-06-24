@@ -56,13 +56,38 @@ function Modal({title,onClose,children,wide}){return(
     </div>
   </div>
 );}
-function PhotoUpload({value,onChange,height=110}){
+function PhotoUpload({value,onChange,storeId,bucket="product-images"}){
   const ref=useRef();
-  const handle=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>onChange(ev.target.result);r.readAsDataURL(f);};
-  return(<div><div onClick={()=>ref.current.click()} style={{width:"100%",height,borderRadius:10,border:`2px dashed ${G.bord2}`,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",cursor:"pointer",overflow:"hidden",background:G.bg,position:"relative"}}>
-    {value?<img src={value} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:<><span style={{fontSize:24,marginBottom:4}}>📷</span><span style={{color:G.muted,fontSize:12}}>Clique para adicionar</span></>}
-    {value&&<div style={{position:"absolute",bottom:0,left:0,right:0,background:"#000a",textAlign:"center",fontSize:11,color:"#fff",padding:"3px 0"}}>Trocar</div>}
-  </div><input ref={ref} type="file" accept="image/*" onChange={handle} style={{display:"none"}}/></div>);
+  const [uploading,setUploading]=useState(false);
+  const handle=async e=>{
+    const f=e.target.files[0];if(!f)return;
+    setUploading(true);
+    try{
+      const ext=f.name.split(".").pop();
+      const path=`${storeId||"general"}/${Date.now()}.${ext}`;
+      const{data,error}=await sb.storage.from(bucket).upload(path,f,{upsert:true});
+      if(error)throw error;
+      const{data:{publicUrl}}=sb.storage.from(bucket).getPublicUrl(path);
+      onChange(publicUrl);
+    }catch(err){
+      // Fallback to base64 for small images
+      if(f.size<500000){
+        const r=new FileReader();r.onload=ev=>onChange(ev.target.result);r.readAsDataURL(f);
+      }else{
+        alert("Erro ao fazer upload. Use uma imagem menor que 500KB.");
+      }
+    }
+    setUploading(false);
+  };
+  return(<div>
+    <div onClick={()=>!uploading&&ref.current.click()} style={{width:"100%",height:110,borderRadius:10,border:`2px dashed ${G.bord2}`,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",cursor:uploading?"wait":"pointer",overflow:"hidden",background:G.bg,position:"relative"}}>
+      {uploading?<><div style={{width:24,height:24,border:`3px solid ${G.muted}`,borderTopColor:G.pink,borderRadius:"50%",animation:"spin .7s linear infinite",marginBottom:8}}/><span style={{color:G.muted,fontSize:12}}>Enviando...</span></>
+      :value?<img src={value} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+      :<><span style={{fontSize:24,marginBottom:4}}>📷</span><span style={{color:G.muted,fontSize:12}}>Clique para adicionar foto</span><span style={{color:G.muted,fontSize:10,marginTop:2}}>Máx. recomendado: 2MB</span></>}
+      {value&&!uploading&&<div style={{position:"absolute",bottom:0,left:0,right:0,background:"#000a",textAlign:"center",fontSize:11,color:"#fff",padding:"3px 0"}}>Trocar</div>}
+    </div>
+    <input ref={ref} type="file" accept="image/*" onChange={handle} style={{display:"none"}}/>
+  </div>);
 }
 const RTBadge=({connected})=>(
   <div style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:connected?G.green:G.amber}}>
@@ -332,7 +357,7 @@ function Products({products,storeId,toast,onRefresh}){
 
     {open&&<Modal title={edit?"Editar Produto":"Novo Produto"} onClose={()=>setOpen(false)}>
       <div style={{display:"flex",flexDirection:"column",gap:11}}>
-        <PhotoUpload value={f.photo_url} onChange={v=>setF({...f,photo_url:v})}/>
+        <PhotoUpload value={f.photo_url} onChange={v=>setF({...f,photo_url:v})} storeId={storeId}/>
         <Inp label="Nome *" value={f.name} onChange={e=>setF({...f,name:e.target.value})} placeholder="Ex: Legging Power Preta P"/>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
           <Inp label="Categoria" value={f.category} onChange={e=>setF({...f,category:e.target.value})} placeholder="Legging, Top..."/>

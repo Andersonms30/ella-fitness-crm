@@ -323,13 +323,20 @@ function Products({products,storeId,toast,onRefresh}){
   };
 
   const margin=f.sale_price&&f.cost_price?(((+f.sale_price-+f.cost_price)/+f.sale_price)*100).toFixed(1):null;
-  const list=products.filter(p=>p.active!==false&&(p.name.toLowerCase().includes(q.toLowerCase())||p.category?.toLowerCase().includes(q.toLowerCase())));
-  const cats=[...new Set(products.filter(p=>p.active).map(p=>p.category))];
+  const [catFil,setCatFil]=useState("");
+  const list=products.filter(p=>{
+    if(p.active===false)return false;
+    if(catFil&&p.category!==catFil)return false;
+    if(q&&!p.name.toLowerCase().includes(q.toLowerCase())&&!p.description?.toLowerCase().includes(q.toLowerCase()))return false;
+    return true;
+  });
+  const cats=[...new Set(products.filter(p=>p.active!==false).map(p=>p.category))].sort();
 
   return(<div style={{display:"flex",flexDirection:"column",gap:12}}>
-    <div style={{display:"flex",gap:9}}><Inp placeholder="🔍 Buscar..." value={q} onChange={e=>setQ(e.target.value)} style={{flex:1}}/><Btn onClick={openNew} variant="pink">+ Produto</Btn></div>
+    <div style={{display:"flex",gap:9}}><Inp placeholder="🔍 Buscar por nome ou descrição..." value={q} onChange={e=>setQ(e.target.value)} style={{flex:1}}/><Btn onClick={openNew} variant="pink">+ Produto</Btn></div>
     <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-      {["Todos",...cats].map(c=><button key={c} onClick={()=>setQ(c==="Todos"?"":c)} style={{padding:"4px 11px",borderRadius:20,border:"none",background:(c==="Todos"&&!q)||q===c?G.pink:"#ffffff0e",color:(c==="Todos"&&!q)||q===c?"#fff":G.muted,fontSize:12,cursor:"pointer",fontWeight:(c==="Todos"&&!q)||q===c?700:400}}>{c}</button>)}
+      <button onClick={()=>setCatFil("")} style={{padding:"4px 11px",borderRadius:20,border:"none",background:!catFil?G.pink:"#ffffff0e",color:!catFil?"#fff":G.muted,fontSize:12,cursor:"pointer",fontWeight:!catFil?700:400}}>Todos</button>
+      {cats.map(c=><button key={c} onClick={()=>setCatFil(c===catFil?"":c)} style={{padding:"4px 11px",borderRadius:20,border:"none",background:catFil===c?G.pink:"#ffffff0e",color:catFil===c?"#fff":G.muted,fontSize:12,cursor:"pointer",fontWeight:catFil===c?700:400}}>{c}</button>)}
     </div>
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(155px,1fr))",gap:11}}>
       {list.map(p=>{
@@ -449,6 +456,7 @@ function NewSale({products,customers,storeId,toast,allInstallments}){
   const [notes,setNotes]=useState("");const [inclPend,setInclPend]=useState(false);
   const [discount,setDiscount]=useState("");const [discType,setDiscType]=useState("pct");
   const [saving,setSaving]=useState(false);
+  const [prodCat,setProdCat]=useState("");const [prodQ,setProdQ]=useState("");
 
   const selC=customers.find(c=>c.id===cId);
   const pendInst=cId?allInstallments.filter(i=>i.customer_id===cId&&!i.paid):[];
@@ -501,9 +509,22 @@ function NewSale({products,customers,storeId,toast,allInstallments}){
     </Card>
 
     <Card>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:9,marginBottom:10}}>
+        <Sel label="Filtrar categoria" value={prodCat} onChange={e=>setProdCat(e.target.value)}>
+          <option value="">Todas as categorias</option>
+          {[...new Set(products.filter(p=>p.active!==false&&p.stock>0).map(p=>p.category))].sort().map(c=><option key={c} value={c}>{c}</option>)}
+        </Sel>
+        <Inp label="Buscar produto" value={prodQ} onChange={e=>setProdQ(e.target.value)} placeholder="Nome ou descrição..."/>
+      </div>
       <Sel label="Adicionar produto" value="" onChange={e=>{if(e.target.value){addItem(e.target.value);e.target.value=""}}}>
         <option value="">Selecione um produto...</option>
-        {products.filter(p=>p.active).map(p=><option key={p.id} value={p.id}>{p.name} — {R(p.sale_price)}{p.stock<=3?" ⚠️":""}</option>)}
+        {products.filter(p=>{
+          if(p.active===false)return false;
+          if(p.stock<=0)return false;
+          if(prodCat&&p.category!==prodCat)return false;
+          if(prodQ&&!p.name.toLowerCase().includes(prodQ.toLowerCase())&&!p.description?.toLowerCase().includes(prodQ.toLowerCase()))return false;
+          return true;
+        }).map(p=><option key={p.id} value={p.id}>{p.name} — {R(p.sale_price)} (Est: {p.stock})</option>)}
       </Sel>
       {items.length>0&&<div style={{marginTop:11,display:"flex",flexDirection:"column",gap:7}}>{items.map(it=>(
         <div key={it.pid} style={{display:"flex",alignItems:"center",gap:8,background:"#ffffff07",borderRadius:9,padding:"7px 10px"}}>

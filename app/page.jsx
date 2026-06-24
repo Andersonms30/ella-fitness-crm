@@ -1022,8 +1022,14 @@ export default function Page(){
   },[]);
   const initStore=async u=>{
     setUser(u);
-    const{data}=await sb.from("store_users").select("store_id,stores(*)").eq("user_id",u.id).single();
-    if(data){setStoreId(data.store_id);setSName(data.stores?.name||"Fitness CRM");setStoreSettings(data.stores||{});}
+    try{
+      const{data:su}=await sb.from("store_users").select("store_id").eq("user_id",u.id).single();
+      if(su?.store_id){
+        setStoreId(su.store_id);
+        const{data:st}=await sb.from("stores").select("*").eq("id",su.store_id).single();
+        if(st){setSName(st.name||"Fitness CRM");setStoreSettings(st);}
+      }
+    }catch(e){console.error("initStore error",e);}
     setLoading(false);
   };
   useEffect(()=>{if(!storeId)return;loadAll();const cleanup=setupRealtime();return cleanup;},[storeId]);

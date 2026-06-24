@@ -1029,13 +1029,13 @@ export default function Page(){
   useEffect(()=>{if(!storeId)return;loadAll();const cleanup=setupRealtime();return cleanup;},[storeId]);
   const loadAll=async()=>{
     const[p,c,s,i,co]=await Promise.all([
-      sb.from("products").select("*").eq("store_id",storeId).eq("active",true).order("name"),
+      sb.from("products").select("*").eq("store_id",storeId).order("name"),
       sb.from("customers").select("*").eq("store_id",storeId).order("name"),
       sb.from("sales").select("*,sale_items(*)").eq("store_id",storeId).order("date",{ascending:false}),
       sb.from("installments").select("*").eq("store_id",storeId).order("due_date"),
       sb.from("costs").select("*").eq("store_id",storeId).order("created_at",{ascending:false}),
     ]);
-    if(p.data)setProducts(p.data);
+    if(p.data)setProducts(p.data.filter(x=>x.active!==false));
     if(c.data)setCustomers(c.data);
     if(s.data)setSales(s.data.map(sale=>({...sale,items:sale.sale_items||[]})));
     if(i.data)setInstallments(i.data);

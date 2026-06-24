@@ -270,7 +270,7 @@ function Dashboard({sales,products,customers,costs,installments,storeSettings}){
 }
 
 // ── Products ──────────────────────────────────────────────────
-function Products({products,storeId,toast}){
+function Products({products,storeId,toast,onRefresh}){
   const [open,setOpen]=useState(false);const [stockOpen,setStockOpen]=useState(null);
   const [edit,setEdit]=useState(null);const [q,setQ]=useState("");
   const empty={name:"",category:"",cost_price:"",sale_price:"",stock:"",description:"",photo_url:""};
@@ -284,7 +284,8 @@ function Products({products,storeId,toast}){
     setSaving(true);
     const d={name:f.name,category:f.category||"Geral",cost_price:+f.cost_price||0,sale_price:+f.sale_price,stock:+f.stock||0,description:f.description||"",photo_url:f.photo_url||"",store_id:storeId,active:true};
     const{error}=edit?await sb.from("products").update(d).eq("id",edit.id):await sb.from("products").insert(d);
-    if(error)toast("Erro: "+error.message,"#f87171");else{toast(edit?"Produto atualizado!":"Produto cadastrado!");setOpen(false);}
+    if(error){toast("Erro: "+error.message,"#f87171");}
+    else{toast(edit?"Produto atualizado!":"Produto cadastrado!");setOpen(false);onRefresh&&onRefresh();}
     setSaving(false);
   };
   const del=async id=>{await sb.from("products").update({active:false}).eq("id",id);toast("Removido","#f87171");};
@@ -1048,6 +1049,7 @@ export default function Page(){
   const loadAll=async(sid)=>{
     const id=sid||storeId;
     if(!id)return;
+    console.log("loadAll with storeId:", id);
     const[p,c,s,i,co]=await Promise.all([
       sb.from("products").select("*").eq("store_id",id).order("name"),
       sb.from("customers").select("*").eq("store_id",id).order("name"),
@@ -1055,6 +1057,7 @@ export default function Page(){
       sb.from("installments").select("*").eq("store_id",id).order("due_date"),
       sb.from("costs").select("*").eq("store_id",id).order("created_at",{ascending:false}),
     ]);
+    console.log("products result:", p.data?.length, p.error);
     if(p.data)setProducts(p.data);
     if(c.data)setCustomers(c.data);
     if(s.data)setSales(s.data.map(sale=>({...sale,items:sale.sale_items||[]})));
@@ -1082,7 +1085,7 @@ export default function Page(){
     <SalesList sales={sales} customers={customers} installments={installments} storeId={storeId} toast={toast} products={products}/>,
     <DueDates installments={installments} customers={customers} storeName={storeName} toast={toast} sales={sales}/>,
     <Customers customers={customers} sales={sales} installments={installments} storeId={storeId} storeName={storeName} toast={toast}/>,
-    <Products products={products} storeId={storeId} toast={toast}/>,
+    <Products products={products} storeId={storeId} toast={toast} onRefresh={()=>loadAll(storeId)}/>,
     <Costs costs={costs} customers={customers} storeId={storeId} toast={toast}/>,
     <CashFlow sales={sales} costs={costs} installments={installments}/>,
     <Reports sales={sales} products={products} customers={customers} installments={installments} costs={costs} storeName={storeName}/>,

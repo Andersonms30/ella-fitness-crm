@@ -415,7 +415,8 @@ function Costs({costs,customers,storeId,toast}){
 }
 
 // ── New Sale ──────────────────────────────────────────────────
-function NewSale({products,customers,storeId,toast,allInstallments,isQuote=false}){
+function NewSale({products,customers,storeId,toast,allInstallments}){
+  const [isQuote,setIsQuote]=useState(false);
   const [cId,setCId]=useState("");const [date,setDate]=useState(TODAY());
   const [items,setItems]=useState([]);const [method,setMethod]=useState("pix");
   const [parc,setParc]=useState(1);const [diaVenc,setDiaVenc]=useState("10");
@@ -456,6 +457,10 @@ function NewSale({products,customers,storeId,toast,allInstallments,isQuote=false
   };
 
   return(<div style={{display:"flex",flexDirection:"column",gap:12}}>
+    <div style={{display:"flex",gap:7}}>
+      <button onClick={()=>setIsQuote(false)} style={{flex:1,padding:"8px 0",borderRadius:9,border:"none",background:!isQuote?G.pink:"#ffffff0e",color:!isQuote?"#fff":G.muted,fontWeight:!isQuote?700:400,fontSize:13,cursor:"pointer"}}>🛒 Venda</button>
+      <button onClick={()=>setIsQuote(true)} style={{flex:1,padding:"8px 0",borderRadius:9,border:"none",background:isQuote?G.violet:"#ffffff0e",color:isQuote?"#fff":G.muted,fontWeight:isQuote?700:400,fontSize:13,cursor:"pointer"}}>📋 Orçamento</button>
+    </div>
     <Card>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:11}}>
         <Sel label="Cliente" value={cId} onChange={e=>{setCId(e.target.value);setInclPend(false);}}>

@@ -1039,18 +1039,21 @@ export default function Page(){
         setStoreId(sid);
         const{data:st}=await sb.from("stores").select("*").eq("id",sid).single();
         if(st){setSName(st.name||"Fitness CRM");setStoreSettings(st);}
+        loadAll(sid);
       }
     }catch(e){console.error("initStore error",e);}
     setLoading(false);
   };
-  useEffect(()=>{if(!storeId)return;loadAll();const cleanup=setupRealtime();return cleanup;},[storeId]);
-  const loadAll=async()=>{
+  useEffect(()=>{if(!storeId)return;const cleanup=setupRealtime();return cleanup;},[storeId]);
+  const loadAll=async(sid)=>{
+    const id=sid||storeId;
+    if(!id)return;
     const[p,c,s,i,co]=await Promise.all([
-      sb.from("products").select("*").eq("store_id",storeId).order("name"),
-      sb.from("customers").select("*").eq("store_id",storeId).order("name"),
-      sb.from("sales").select("*,sale_items(*)").eq("store_id",storeId).order("date",{ascending:false}),
-      sb.from("installments").select("*").eq("store_id",storeId).order("due_date"),
-      sb.from("costs").select("*").eq("store_id",storeId).order("created_at",{ascending:false}),
+      sb.from("products").select("*").eq("store_id",id).order("name"),
+      sb.from("customers").select("*").eq("store_id",id).order("name"),
+      sb.from("sales").select("*,sale_items(*)").eq("store_id",id).order("date",{ascending:false}),
+      sb.from("installments").select("*").eq("store_id",id).order("due_date"),
+      sb.from("costs").select("*").eq("store_id",id).order("created_at",{ascending:false}),
     ]);
     if(p.data)setProducts(p.data.filter(x=>x.active!==false));
     if(c.data)setCustomers(c.data);

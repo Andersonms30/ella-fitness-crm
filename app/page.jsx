@@ -291,6 +291,40 @@ function Dashboard({sales,products,customers,costs,installments,storeSettings}){
         </div>
       ))}
     </Card>
+
+    {/* Bloco de Estoque no Dashboard */}
+    {(()=>{
+      const ap=products.filter(p=>p.active!==false&&p.stock>0);
+      const totCusto=ap.reduce((a,p)=>a+p.stock*Number(p.cost_price||0),0);
+      const totRec=ap.reduce((a,p)=>a+p.stock*Number(p.sale_price||0),0);
+      const totMargem=totRec-totCusto;
+      const totMgPct=totRec>0?(totMargem/totRec)*100:0;
+      const lowMg=ap.filter(p=>{const rp=p.stock*Number(p.sale_price||0);const ct=p.stock*Number(p.cost_price||0);return rp>0&&((rp-ct)/rp)*100<15;});
+      const top3=ap.map(p=>({...p,recPot:p.stock*Number(p.sale_price||0)})).sort((a,b)=>b.recPot-a.recPot).slice(0,3);
+      return(<Card>
+        <div style={{fontWeight:700,marginBottom:12,fontSize:14}}>📦 Resumo do estoque</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:9,marginBottom:12}}>
+          {[["Custo total",R(totCusto),G.amber],["Receita potencial",R(totRec),G.violet],["Margem bruta",R(totMargem),G.green],["Margem %",totMgPct.toFixed(1)+"%",totMgPct>=30?G.green:totMgPct>=15?G.amber:G.red]].map(([l,v,col])=>(
+            <div key={l} style={{background:"#ffffff06",borderRadius:10,padding:"10px 12px"}}>
+              <div style={{color:G.muted,fontSize:10,textTransform:"uppercase",letterSpacing:.7}}>{l}</div>
+              <div style={{color:col,fontWeight:800,fontSize:15,marginTop:3}}>{v}</div>
+            </div>
+          ))}
+        </div>
+        {lowMg.length>0&&<div style={{background:`${G.red}0a`,border:`1px solid ${G.red}30`,borderRadius:8,padding:"8px 12px",marginBottom:10}}>
+          <div style={{color:G.red,fontWeight:700,fontSize:12,marginBottom:5}}>⚠️ Margem abaixo de 15%</div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:5}}>{lowMg.map(p=><Badge key={p.id} color={G.red}>{p.name}</Badge>)}</div>
+        </div>}
+        <div style={{fontWeight:600,fontSize:12,color:G.muted,marginBottom:8}}>🏆 Maior receita potencial</div>
+        {top3.map((p,i)=>(
+          <div key={p.id} style={{display:"flex",alignItems:"center",gap:9,marginBottom:i<2?8:0}}>
+            <div style={{width:24,height:24,borderRadius:"50%",background:PAL[i],display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,color:"#fff",flexShrink:0}}>{i+1}</div>
+            <div style={{flex:1}}><div style={{fontSize:13}}>{p.name}</div><div style={{fontSize:11,color:G.muted}}>{p.stock} un.</div></div>
+            <div style={{textAlign:"right"}}><div style={{color:G.violet,fontWeight:700,fontSize:13}}>{R(p.recPot)}</div></div>
+          </div>
+        ))}
+      </Card>);
+    })()}
   </div>);
 }
 
@@ -1051,7 +1085,141 @@ function AuthScreen({onAuth}){
   </div>);
 }
 
-const TABS=[{l:"Dashboard",i:"📊"},{l:"Nova Venda",i:"🛒"},{l:"Vendas",i:"🧾"},{l:"Vencimentos",i:"📅"},{l:"Clientes",i:"👤"},{l:"Produtos",i:"👗"},{l:"Custos",i:"💸"},{l:"Caixa",i:"💵"},{l:"Relatórios",i:"📋"},{l:"Config",i:"⚙️"}];
+// ── Estoque ───────────────────────────────────────────────────
+function Estoque({products}){
+  const [sortBy,setSortBy]=useState("recPot"); // recPot | margem | custo | nome
+  const [catFil,setCatFil]=useState("");
+  const [q,setQ]=useState("");
+
+  const activeProds=products.filter(p=>p.active!==false&&p.stock>0);
+  const cats=[...new Set(activeProds.map(p=>p.category))].sort();
+
+  const calcs=activeProds.map(p=>{
+    const custoTotal=p.stock*Number(p.cost_price||0);
+    const recPot=p.stock*Number(p.sale_price||0);
+    const margemBruta=recPot-custoTotal;
+    const margemPct=recPot>0?(margemBruta/recPot)*100:0;
+    return{...p,custoTotal,recPot,margemBruta,margemPct};
+  });
+
+  const totalCusto=calcs.reduce((a,p)=>a+p.custoTotal,0);
+  const totalRecPot=calcs.reduce((a,p)=>a+p.recPot,0);
+  const totalMargem=totalRecPot-totalCusto;
+  const totalMargemPct=totalRecPot>0?(totalMargem/totalRecPot)*100:0;
+
+  const filtered=calcs.filter(p=>{
+    if(catFil&&p.category!==catFil)return false;
+    if(q&&!p.name.toLowerCase().includes(q.toLowerCase()))return false;
+    return true;
+  }).sort((a,b)=>{
+    if(sortBy==="recPot")return b.recPot-a.recPot;
+    if(sortBy==="margem")return b.margemPct-a.margemPct;
+    if(sortBy==="custo")return b.custoTotal-a.custoTotal;
+    return a.name.localeCompare(b.name);
+  });
+
+  const lowMargin=calcs.filter(p=>p.margemPct<15);
+  const topRevenue=calcs.sort((a,b)=>b.recPot-a.recPot).slice(0,3);
+
+  return(<div style={{display:"flex",flexDirection:"column",gap:14}}>
+    {/* KPIs */}
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(145px,1fr))",gap:10}}>
+      {[
+        ["Custo total estoque",R(totalCusto),G.amber,"💰"],
+        ["Receita potencial",R(totalRecPot),G.violet,"📈"],
+        ["Margem bruta pot.",R(totalMargem),totalMargem>=0?G.green:G.red,"📊"],
+        ["Margem %",totalMargemPct.toFixed(1)+"%",totalMargemPct>=30?G.green:totalMargemPct>=15?G.amber:G.red,"🎯"],
+      ].map(([l,v,col,ic])=>(
+        <Card key={l} style={{borderLeft:`3px solid ${col}`,padding:"13px 14px"}}>
+          <div style={{fontSize:14,marginBottom:4}}>{ic}</div>
+          <div style={{color:G.muted,fontSize:10,textTransform:"uppercase",letterSpacing:.8}}>{l}</div>
+          <div style={{color:col,fontSize:17,fontWeight:900,marginTop:4}}>{v}</div>
+        </Card>
+      ))}
+    </div>
+
+    {/* Alertas */}
+    {lowMargin.length>0&&<Card style={{borderColor:G.red+"44",background:`${G.red}08`}}>
+      <div style={{color:G.red,fontWeight:700,marginBottom:8,fontSize:13}}>⚠️ Margem abaixo de 15%</div>
+      <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+        {lowMargin.map(p=><Badge key={p.id} color={G.red}>{p.name} — {p.margemPct.toFixed(1)}%</Badge>)}
+      </div>
+    </Card>}
+
+    <Card>
+      <div style={{fontWeight:700,marginBottom:10,fontSize:14}}>🏆 Maior receita potencial</div>
+      {topRevenue.map((p,i)=>(
+        <div key={p.id} style={{display:"flex",alignItems:"center",gap:10,marginBottom:i<2?10:0}}>
+          <div style={{width:28,height:28,borderRadius:"50%",flexShrink:0,background:PAL[i],display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:13,color:"#fff"}}>{i+1}</div>
+          <div style={{flex:1}}>
+            <div style={{fontSize:13,fontWeight:600}}>{p.name}</div>
+            <div style={{fontSize:11,color:G.muted}}>{p.stock} un. × {R(p.sale_price)}</div>
+          </div>
+          <div style={{textAlign:"right"}}>
+            <div style={{color:G.violet,fontWeight:700,fontSize:14}}>{R(p.recPot)}</div>
+            <div style={{fontSize:11,color:G.muted}}>Mg: {p.margemPct.toFixed(1)}%</div>
+          </div>
+        </div>
+      ))}
+    </Card>
+
+    {/* Filtros */}
+    <Card style={{padding:"12px 14px"}}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:9,marginBottom:9}}>
+        <Inp placeholder="🔍 Buscar produto..." value={q} onChange={e=>setQ(e.target.value)}/>
+        <Sel value={catFil} onChange={e=>setCatFil(e.target.value)}>
+          <option value="">Todas as categorias</option>
+          {cats.map(c=><option key={c} value={c}>{c}</option>)}
+        </Sel>
+      </div>
+      <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+        <span style={{color:G.muted,fontSize:12,alignSelf:"center"}}>Ordenar:</span>
+        {[["recPot","Rec. Potencial"],["margem","Margem %"],["custo","Custo Total"],["nome","Nome"]].map(([k,l])=>(
+          <button key={k} onClick={()=>setSortBy(k)} style={{padding:"4px 10px",borderRadius:20,border:"none",background:sortBy===k?G.violet:"#ffffff0e",color:sortBy===k?"#fff":G.muted,fontSize:12,cursor:"pointer",fontWeight:sortBy===k?700:400}}>{l}</button>
+        ))}
+      </div>
+    </Card>
+
+    {/* Tabela */}
+    <Card style={{padding:"12px 14px",overflowX:"auto"}}>
+      <div style={{fontWeight:700,marginBottom:12,fontSize:14}}>📋 Inventário completo ({filtered.length} produtos)</div>
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        {/* Header */}
+        <div style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1fr 1fr 1fr",gap:8,padding:"6px 8px",background:"#ffffff08",borderRadius:8}}>
+          {["Produto","Qtd","Custo Unit.","Custo Total","Rec. Potencial","Margem"].map(h=><div key={h} style={{color:G.muted,fontSize:10,textTransform:"uppercase",letterSpacing:.6,fontWeight:700}}>{h}</div>)}
+        </div>
+        {filtered.length===0&&<div style={{color:G.muted,textAlign:"center",padding:20}}>Nenhum produto encontrado.</div>}
+        {filtered.map(p=>(
+          <div key={p.id} style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1fr 1fr 1fr",gap:8,padding:"8px",background:"#ffffff06",borderRadius:8,borderLeft:`3px solid ${p.margemPct<15?G.red:p.margemPct>=40?G.green:G.bord}`}}>
+            <div>
+              <div style={{fontSize:13,fontWeight:600,lineHeight:1.3}}>{p.name}</div>
+              <div style={{fontSize:10,color:G.muted}}>{p.category}</div>
+            </div>
+            <div style={{fontSize:13,color:G.text,alignSelf:"center"}}>{p.stock}</div>
+            <div style={{fontSize:13,color:G.muted,alignSelf:"center"}}>{R(p.cost_price)}</div>
+            <div style={{fontSize:13,color:G.amber,fontWeight:600,alignSelf:"center"}}>{R(p.custoTotal)}</div>
+            <div style={{fontSize:13,color:G.violet,fontWeight:600,alignSelf:"center"}}>{R(p.recPot)}</div>
+            <div style={{alignSelf:"center"}}>
+              <div style={{fontSize:13,color:p.margemPct<15?G.red:p.margemPct>=40?G.green:G.amber,fontWeight:700}}>{p.margemPct.toFixed(1)}%</div>
+              <div style={{fontSize:10,color:G.muted}}>{R(p.margemBruta)}</div>
+            </div>
+          </div>
+        ))}
+        {/* Totais */}
+        {filtered.length>0&&<div style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1fr 1fr 1fr",gap:8,padding:"10px 8px",background:`${G.pink}10`,borderRadius:8,borderTop:`1px solid ${G.bord}`}}>
+          <div style={{fontSize:13,fontWeight:700,color:G.pink}}>TOTAL</div>
+          <div style={{fontSize:13,color:G.muted}}>{filtered.reduce((a,p)=>a+p.stock,0)} un.</div>
+          <div/>
+          <div style={{fontSize:13,color:G.amber,fontWeight:700}}>{R(filtered.reduce((a,p)=>a+p.custoTotal,0))}</div>
+          <div style={{fontSize:13,color:G.violet,fontWeight:700}}>{R(filtered.reduce((a,p)=>a+p.recPot,0))}</div>
+          <div style={{fontSize:13,color:G.green,fontWeight:700}}>{(filtered.reduce((a,p)=>a+p.recPot,0)>0?((filtered.reduce((a,p)=>a+p.margemBruta,0)/filtered.reduce((a,p)=>a+p.recPot,0))*100):0).toFixed(1)}%</div>
+        </div>}
+      </div>
+    </Card>
+  </div>);
+}
+
+const TABS=[{l:"Dashboard",i:"📊"},{l:"Nova Venda",i:"🛒"},{l:"Vendas",i:"🧾"},{l:"Vencimentos",i:"📅"},{l:"Clientes",i:"👤"},{l:"Produtos",i:"👗"},{l:"Estoque",i:"📦"},{l:"Custos",i:"💸"},{l:"Caixa",i:"💵"},{l:"Relatórios",i:"📋"},{l:"Config",i:"⚙️"}];
 
 export default function Page(){
   const [user,setUser]=useState(null);const [storeId,setStoreId]=useState(null);
@@ -1132,6 +1300,7 @@ export default function Page(){
     <DueDates installments={installments} customers={customers} storeName={storeName} toast={toast} sales={sales}/>,
     <Customers customers={customers} sales={sales} installments={installments} storeId={storeId} storeName={storeName} toast={toast}/>,
     <Products products={products} storeId={storeId} toast={toast} onRefresh={()=>loadAll(storeId)}/>,
+    <Estoque products={products}/>,
     <Costs costs={costs} customers={customers} storeId={storeId} toast={toast}/>,
     <CashFlow sales={sales} costs={costs} installments={installments}/>,
     <Reports sales={sales} products={products} customers={customers} installments={installments} costs={costs} storeName={storeName}/>,

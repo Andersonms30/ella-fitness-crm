@@ -1023,10 +1023,21 @@ export default function Page(){
   const initStore=async u=>{
     setUser(u);
     try{
-      const{data:su}=await sb.from("store_users").select("store_id").eq("user_id",u.id).single();
-      if(su?.store_id){
-        setStoreId(su.store_id);
-        const{data:st}=await sb.from("stores").select("*").eq("id",su.store_id).single();
+      // Try store_users first
+      const{data:su,error:suErr}=await sb.from("store_users").select("store_id").eq("user_id",u.id).single();
+      let sid=su?.store_id;
+      // Fallback: find store by owner email
+      if(!sid){
+        const{data:st}=await sb.from("stores").select("id,name").eq("owner_email",u.email).single();
+        if(st){
+          sid=st.id;
+          // Create missing store_users link
+          await sb.from("store_users").insert({store_id:st.id,user_id:u.id,role:"owner"}).select();
+        }
+      }
+      if(sid){
+        setStoreId(sid);
+        const{data:st}=await sb.from("stores").select("*").eq("id",sid).single();
         if(st){setSName(st.name||"Fitness CRM");setStoreSettings(st);}
       }
     }catch(e){console.error("initStore error",e);}

@@ -297,7 +297,7 @@ function Products({products,storeId,toast}){
   };
 
   const margin=f.sale_price&&f.cost_price?(((+f.sale_price-+f.cost_price)/+f.sale_price)*100).toFixed(1):null;
-  const list=products.filter(p=>p.active&&(p.name.toLowerCase().includes(q.toLowerCase())||p.category?.toLowerCase().includes(q.toLowerCase())));
+  const list=products.filter(p=>p.active!==false&&(p.name.toLowerCase().includes(q.toLowerCase())||p.category?.toLowerCase().includes(q.toLowerCase())));
   const cats=[...new Set(products.filter(p=>p.active).map(p=>p.category))];
 
   return(<div style={{display:"flex",flexDirection:"column",gap:12}}>
@@ -1055,7 +1055,7 @@ export default function Page(){
       sb.from("installments").select("*").eq("store_id",id).order("due_date"),
       sb.from("costs").select("*").eq("store_id",id).order("created_at",{ascending:false}),
     ]);
-    if(p.data)setProducts(p.data.filter(x=>x.active!==false));
+    if(p.data)setProducts(p.data);
     if(c.data)setCustomers(c.data);
     if(s.data)setSales(s.data.map(sale=>({...sale,items:sale.sale_items||[]})));
     if(i.data)setInstallments(i.data);

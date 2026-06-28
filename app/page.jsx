@@ -366,12 +366,12 @@ function Dashboard({sales,products,customers,costs,installments,storeSettings}){
       ].map(([ic,l,v,pv,col])=>(
         <Card key={l} style={{borderLeft:`3px solid ${col}`,padding:"13px 14px"}}>
           <div style={{fontSize:14,marginBottom:4}}>{ic}</div>
-          <div style={{color:G.muted,fontSize:10,textTransform:"uppercase",letterSpacing:.8}}>{l}</div>
+          <div style={{color:"#ffffffaa",fontSize:10,textTransform:"uppercase",letterSpacing:.8,fontWeight:600}}>{l}</div>
           <div style={{display:"flex",alignItems:"baseline",flexWrap:"wrap",gap:2,marginTop:4}}>
             <span style={{color:col,fontSize:17,fontWeight:900}}>{R(v)}</span>
             {pv!==null&&<VarTag cur={v} prev={pv}/>}
           </div>
-          {pv!==null&&pv>0&&<div style={{color:G.muted,fontSize:10,marginTop:3}}>Ant: {R(pv)}</div>}
+          {pv!==null&&pv>0&&<div style={{color:"#ffffff88",fontSize:10,marginTop:3}}>Ant: {R(pv)}</div>}
         </Card>
       ))}
     </div>
@@ -379,22 +379,22 @@ function Dashboard({sales,products,customers,costs,installments,storeSettings}){
     {/* KPIs secundários */}
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
       <Card style={{padding:"12px 13px",borderLeft:`3px solid ${G.sky}`}}>
-        <div style={{color:G.muted,fontSize:10,textTransform:"uppercase"}}>🎫 Ticket médio</div>
+        <div style={{color:"#ffffffaa",fontSize:10,textTransform:"uppercase",fontWeight:600}}>🎫 Ticket médio</div>
         <div style={{display:"flex",alignItems:"baseline",gap:4,marginTop:3}}>
           <span style={{color:G.sky,fontWeight:800,fontSize:15}}>{R(ticketMedio)}</span>
           <VarTag cur={ticketMedio} prev={prevTicket}/>
         </div>
-        <div style={{color:G.muted,fontSize:10,marginTop:2}}>{fSales.length} vendas · Ant: {prevSales.length}</div>
+        <div style={{color:"#ffffff88",fontSize:10,marginTop:2}}>{fSales.length} vendas · Ant: {prevSales.length}</div>
       </Card>
       <Card style={{padding:"12px 13px",borderLeft:`3px solid ${G.green}`}}>
-        <div style={{color:G.muted,fontSize:10,textTransform:"uppercase"}}>🎯 Conversão</div>
+        <div style={{color:"#ffffffaa",fontSize:10,textTransform:"uppercase",fontWeight:600}}>🎯 Conversão</div>
         <div style={{color:G.green,fontWeight:800,fontSize:15,marginTop:3}}>{taxaConv.toFixed(1)}%</div>
-        <div style={{color:G.muted,fontSize:10,marginTop:2}}>{fSales.length} vendas · {fQuotes.length} orç.</div>
+        <div style={{color:"#ffffff88",fontSize:10,marginTop:2}}>{fSales.length} vendas · {fQuotes.length} orç.</div>
       </Card>
       <Card style={{padding:"12px 13px",borderLeft:`3px solid ${G.violet}`}}>
-        <div style={{color:G.muted,fontSize:10,textTransform:"uppercase"}}>📊 Margem %</div>
+        <div style={{color:"#ffffffaa",fontSize:10,textTransform:"uppercase",fontWeight:600}}>📊 Margem %</div>
         <div style={{color:G.violet,fontWeight:800,fontSize:15,marginTop:3}}>{marginPct}%</div>
-        <div style={{color:G.muted,fontSize:10,marginTop:2}}>Bruta s/ receita</div>
+        <div style={{color:"#ffffff88",fontSize:10,marginTop:2}}>Bruta s/ receita</div>
       </Card>
     </div>
 
@@ -1096,7 +1096,184 @@ function Settings({storeName,storeId,toast,onSignOut}){
 }
 
 // ── Main App ──────────────────────────────────────────────────
-const TABS=[{l:"Dashboard",i:"📊"},{l:"Nova Venda",i:"🛒"},{l:"Vendas",i:"🧾"},{l:"Vencimentos",i:"📅"},{l:"Clientes",i:"👤"},{l:"Produtos",i:"👗"},{l:"Custos",i:"💸"},{l:"Config",i:"⚙️"}];
+// ── Estoque ───────────────────────────────────────────────────
+function Estoque({products,sales}){
+  const [sortBy,setSortBy]=useState("recPot");
+  const [catFil,setCatFil]=useState("");
+  const [q,setQ]=useState("");
+  const [stockMin,setStockMin]=useState(3);
+
+  const activeProds=products.filter(p=>p.active!==false&&p.stock>=0);
+  const cats=[...new Set(activeProds.map(p=>p.category))].sort();
+
+  // Giro 30 dias
+  const d30=new Date();d30.setDate(d30.getDate()-30);const d30str=d30.toISOString().slice(0,10);
+  const recentSales=sales.filter(s=>s.date>=d30str&&!s.cancelled&&!s.is_quote);
+  const soldQty={};recentSales.forEach(s=>s.items?.forEach(it=>{soldQty[it.product_id]=(soldQty[it.product_id]||0)+it.quantity;}));
+
+  // Histórico saídas (últimas 10 movimentações)
+  const movLog=[];
+  recentSales.forEach(s=>s.items?.forEach(it=>{movLog.push({date:s.date,name:it.product_name,qty:-it.quantity,type:"Saída",ref:`Venda`});}));
+  movLog.sort((a,b)=>b.date.localeCompare(a.date));
+  const movLogTop=movLog.slice(0,10);
+
+  const calcs=activeProds.map(p=>{
+    const min=p.min_stock||p.estoque_minimo||stockMin;
+    const custoTotal=p.stock*Number(p.cost_price||0);
+    const recPot=p.stock*Number(p.sale_price||0);
+    const margemBruta=recPot-custoTotal;
+    const margemPct=recPot>0?(margemBruta/recPot)*100:0;
+    const giro=p.stock>0?((soldQty[p.id]||0)/p.stock).toFixed(2):0;
+    const needsReorder=p.stock<=min;
+    return{...p,custoTotal,recPot,margemBruta,margemPct,giro:Number(giro),needsReorder,min};
+  });
+
+  const comEstoque=calcs.filter(p=>p.stock>0);
+  const totalCusto=comEstoque.reduce((a,p)=>a+p.custoTotal,0);
+  const totalRecPot=comEstoque.reduce((a,p)=>a+p.recPot,0);
+  const totalMargem=totalRecPot-totalCusto;
+  const totalMgPct=totalRecPot>0?(totalMargem/totalRecPot)*100:0;
+  const reorder=calcs.filter(p=>p.needsReorder);
+  const lowMg=comEstoque.filter(p=>p.margemPct<15);
+  const top3=[...comEstoque].sort((a,b)=>b.recPot-a.recPot).slice(0,3);
+
+  const filtered=calcs.filter(p=>{
+    if(p.stock<=0)return false;
+    if(catFil&&p.category!==catFil)return false;
+    if(q&&!p.name.toLowerCase().includes(q.toLowerCase()))return false;
+    return true;
+  }).sort((a,b)=>{
+    if(sortBy==="recPot")return b.recPot-a.recPot;
+    if(sortBy==="margem")return b.margemPct-a.margemPct;
+    if(sortBy==="custo")return b.custoTotal-a.custoTotal;
+    if(sortBy==="giro")return b.giro-a.giro;
+    return a.name.localeCompare(b.name);
+  });
+
+  const exportCSV=()=>{
+    const rows=[["Produto","Categoria","Estoque","Custo Unit.","Preço Venda","Custo Total","Rec. Potencial","Margem %","Giro 30d"]];
+    calcs.filter(p=>p.stock>0).forEach(p=>rows.push([`"${p.name}"`,`"${p.category||""}"`,p.stock,Number(p.cost_price||0).toFixed(2),Number(p.sale_price||0).toFixed(2),p.custoTotal.toFixed(2),p.recPot.toFixed(2),p.margemPct.toFixed(1),p.giro]));
+    const csv=rows.map(r=>r.join(",")).join("\n");
+    const blob=new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8"});
+    const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=`estoque_${TODAY()}.csv`;a.click();URL.revokeObjectURL(url);
+  };
+
+  const LBL=({t})=><div style={{color:"#ffffffaa",fontSize:10,textTransform:"uppercase",letterSpacing:.7,fontWeight:600,marginBottom:4}}>{t}</div>;
+
+  return(<div style={{display:"flex",flexDirection:"column",gap:14}}>
+    {/* KPIs */}
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(145px,1fr))",gap:10}}>
+      {[["💰","Custo total",R(totalCusto),G.amber],["📈","Rec. potencial",R(totalRecPot),G.violet],["📊","Margem bruta",R(totalMargem),G.green],["🎯","Margem %",totalMgPct.toFixed(1)+"%",totalMgPct>=30?G.green:totalMgPct>=15?G.amber:G.red]].map(([ic,l,v,col])=>(
+        <Card key={l} style={{borderLeft:`3px solid ${col}`,padding:"13px 14px"}}>
+          <div style={{fontSize:14,marginBottom:4}}>{ic}</div>
+          <LBL t={l}/>
+          <div style={{color:col,fontSize:17,fontWeight:900}}>{v}</div>
+        </Card>
+      ))}
+    </div>
+
+    {/* Alertas */}
+    {reorder.length>0&&<Card style={{borderColor:G.red+"44",background:`${G.red}08`}}>
+      <div style={{color:G.red,fontWeight:700,marginBottom:8,fontSize:13}}>🔔 Reposição necessária ({reorder.length} produto{reorder.length>1?"s":""})</div>
+      <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+        {reorder.map(p=><Badge key={p.id} color={G.red}>{p.name} — {p.stock}/{p.min} un.</Badge>)}
+      </div>
+    </Card>}
+    {lowMg.length>0&&<Card style={{borderColor:G.amber+"44",background:`${G.amber}08`}}>
+      <div style={{color:G.amber,fontWeight:700,marginBottom:8,fontSize:13}}>⚠️ Margem abaixo de 15%</div>
+      <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+        {lowMg.map(p=><Badge key={p.id} color={G.amber}>{p.name} — {p.margemPct.toFixed(1)}%</Badge>)}
+      </div>
+    </Card>}
+
+    {/* Top 3 */}
+    <Card>
+      <div style={{fontWeight:700,marginBottom:10,fontSize:14}}>🏆 Maior receita potencial</div>
+      {top3.map((p,i)=>(
+        <div key={p.id} style={{display:"flex",alignItems:"center",gap:10,marginBottom:i<2?10:0}}>
+          <div style={{width:28,height:28,borderRadius:"50%",flexShrink:0,background:PAL[i],display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:13,color:"#fff"}}>{i+1}</div>
+          <div style={{flex:1}}><div style={{fontSize:13,fontWeight:600}}>{p.name}</div><div style={{fontSize:11,color:"#ffffff88"}}>{p.stock} un. × {R(p.sale_price)} · Giro: {p.giro}x/30d</div></div>
+          <div style={{textAlign:"right"}}><div style={{color:G.violet,fontWeight:700,fontSize:14}}>{R(p.recPot)}</div><div style={{fontSize:11,color:"#ffffff88"}}>Mg: {p.margemPct.toFixed(1)}%</div></div>
+        </div>
+      ))}
+    </Card>
+
+    {/* Filtros e exportar */}
+    <Card style={{padding:"12px 14px"}}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:9,marginBottom:9}}>
+        <Inp placeholder="🔍 Buscar produto..." value={q} onChange={e=>setQ(e.target.value)}/>
+        <Sel value={catFil} onChange={e=>setCatFil(e.target.value)}>
+          <option value="">Todas as categorias</option>
+          {cats.map(c=><option key={c} value={c}>{c}</option>)}
+        </Sel>
+      </div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
+        <div style={{display:"flex",gap:5,flexWrap:"wrap",alignItems:"center"}}>
+          <span style={{color:"#ffffffaa",fontSize:11,fontWeight:600}}>Ordenar:</span>
+          {[["recPot","Rec.Pot"],["margem","Margem"],["custo","Custo"],["giro","Giro"],["nome","Nome"]].map(([k,l])=>(
+            <button key={k} onClick={()=>setSortBy(k)} style={{padding:"4px 10px",borderRadius:20,border:"none",background:sortBy===k?G.violet:"#ffffff15",color:sortBy===k?"#fff":"#ffffffcc",fontSize:12,cursor:"pointer",fontWeight:sortBy===k?700:400}}>{l}</button>
+          ))}
+        </div>
+        <div style={{display:"flex",gap:7,alignItems:"center"}}>
+          <span style={{color:"#ffffffaa",fontSize:11}}>Est. mín. padrão:</span>
+          <input type="number" value={stockMin} onChange={e=>setStockMin(+e.target.value||1)} min="1" style={{width:50,...iS,padding:"4px 8px",fontSize:12}}/>
+          <Btn small variant="success" onClick={exportCSV}>📥 CSV</Btn>
+        </div>
+      </div>
+    </Card>
+
+    {/* Tabela inventário */}
+    <Card style={{padding:"12px 14px",overflowX:"auto"}}>
+      <div style={{fontWeight:700,marginBottom:12,fontSize:14}}>📋 Inventário ({filtered.length} produtos)</div>
+      <div style={{display:"flex",flexDirection:"column",gap:7}}>
+        <div style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1fr 1fr 1fr 1fr",gap:8,padding:"6px 8px",background:"#ffffff10",borderRadius:8}}>
+          {["Produto","Qtd","Custo Unit.","Custo Total","Rec. Pot.","Margem","Giro 30d"].map(h=><div key={h} style={{color:"#ffffffaa",fontSize:10,textTransform:"uppercase",letterSpacing:.6,fontWeight:700}}>{h}</div>)}
+        </div>
+        {filtered.length===0&&<div style={{color:"#ffffff66",textAlign:"center",padding:20}}>Nenhum produto encontrado.</div>}
+        {filtered.map(p=>(
+          <div key={p.id} style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1fr 1fr 1fr 1fr",gap:8,padding:"8px",background:p.needsReorder?"#f8717108":"#ffffff06",borderRadius:8,borderLeft:`3px solid ${p.needsReorder?G.red:p.margemPct<15?G.amber:p.margemPct>=40?G.green:G.bord}`}}>
+            <div><div style={{fontSize:13,fontWeight:600}}>{p.name}</div><div style={{fontSize:10,color:"#ffffff66"}}>{p.category}</div></div>
+            <div style={{fontSize:13,color:p.needsReorder?G.red:"#ffffffdd",alignSelf:"center",fontWeight:p.needsReorder?700:400}}>{p.stock}{p.needsReorder&&<span style={{fontSize:9,color:G.red}}> ⚠️</span>}</div>
+            <div style={{fontSize:13,color:"#ffffff88",alignSelf:"center"}}>{R(p.cost_price)}</div>
+            <div style={{fontSize:13,color:G.amber,fontWeight:600,alignSelf:"center"}}>{R(p.custoTotal)}</div>
+            <div style={{fontSize:13,color:G.violet,fontWeight:600,alignSelf:"center"}}>{R(p.recPot)}</div>
+            <div style={{alignSelf:"center"}}>
+              <div style={{fontSize:13,color:p.margemPct<15?G.red:p.margemPct>=40?G.green:G.amber,fontWeight:700}}>{p.margemPct.toFixed(1)}%</div>
+              <div style={{fontSize:10,color:"#ffffff66"}}>{R(p.margemBruta)}</div>
+            </div>
+            <div style={{fontSize:13,color:p.giro>1?G.green:p.giro>0.3?G.amber:G.red,fontWeight:600,alignSelf:"center"}}>{p.giro}x</div>
+          </div>
+        ))}
+        {filtered.length>0&&<div style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1fr 1fr 1fr 1fr",gap:8,padding:"9px 8px",background:`${G.pink}10`,borderRadius:8}}>
+          <div style={{fontSize:13,fontWeight:700,color:G.pink}}>TOTAL</div>
+          <div style={{fontSize:13,color:"#ffffff88"}}>{filtered.reduce((a,p)=>a+p.stock,0)} un.</div>
+          <div/>
+          <div style={{fontSize:13,color:G.amber,fontWeight:700}}>{R(filtered.reduce((a,p)=>a+p.custoTotal,0))}</div>
+          <div style={{fontSize:13,color:G.violet,fontWeight:700}}>{R(filtered.reduce((a,p)=>a+p.recPot,0))}</div>
+          <div style={{fontSize:13,color:G.green,fontWeight:700}}>{(()=>{const tr=filtered.reduce((a,p)=>a+p.recPot,0);const tm=filtered.reduce((a,p)=>a+p.margemBruta,0);return tr>0?(tm/tr*100).toFixed(1):0;})()}%</div>
+          <div/>
+        </div>}
+      </div>
+    </Card>
+
+    {/* Histórico movimentações */}
+    {movLogTop.length>0&&<Card>
+      <div style={{fontWeight:700,marginBottom:10,fontSize:14}}>📋 Últimas movimentações (saídas)</div>
+      <div style={{display:"flex",flexDirection:"column",gap:6}}>
+        {movLogTop.map((m,i)=>(
+          <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 10px",background:"#ffffff06",borderRadius:8}}>
+            <div style={{width:32,height:32,borderRadius:8,flexShrink:0,background:`${G.red}20`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:G.red}}>↓</div>
+            <div style={{flex:1}}><div style={{fontSize:13,fontWeight:600}}>{m.name}</div><div style={{fontSize:11,color:"#ffffff88"}}>{m.ref} · {fmtD(m.date)}</div></div>
+            <span style={{color:G.red,fontWeight:700,fontSize:14}}>{m.qty} un.</span>
+          </div>
+        ))}
+      </div>
+    </Card>}
+  </div>);
+}
+
+
+const TABS=[{l:"Dashboard",i:"📊"},{l:"Nova Venda",i:"🛒"},{l:"Vendas",i:"🧾"},{l:"Vencimentos",i:"📅"},{l:"Clientes",i:"👤"},{l:"Produtos",i:"👗"},{l:"Estoque",i:"📦"},{l:"Custos",i:"💸"},{l:"Config",i:"⚙️"}];
 
 export default function Page(){
   const [user,    setUser]    = useState(null);
@@ -1200,6 +1377,7 @@ export default function Page(){
     <DueDates installments={installments} customers={customers} storeName={storeName} toast={toast}/>,
     <Customers customers={customers} sales={sales} installments={installments} storeId={storeId} storeName={storeName} toast={toast}/>,
     <Products products={products} storeId={storeId} toast={toast}/>,
+    <Estoque products={products} sales={sales}/>,
     <Costs costs={costs} customers={customers} storeId={storeId} toast={toast}/>,
     <Settings storeName={storeName} storeId={storeId} toast={toast} onSignOut={handleSignOut}/>,
   ];

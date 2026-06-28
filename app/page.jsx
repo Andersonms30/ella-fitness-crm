@@ -699,7 +699,7 @@ function SalesList({sales,customers,installments,storeId,toast,products}){
           {s.discount>0&&<div style={{color:G.green,fontSize:12,marginBottom:8}}>Desconto aplicado: −{R(s.discount)}</div>}
           {s.notes&&<div style={{color:G.muted,fontSize:12,marginBottom:8}}>📝 {s.notes}</div>}
           <div style={{display:"flex",flexDirection:"column",gap:7,marginBottom:10}}>
-            {sInst.map((inst,i)=><InstRow key={i} inst={inst} custName={cust?.name} custPhone={cust?.phone} onPay={payInst} onUnpay={unpayInst} storeName="Fitness CRM" showWA={!!cust?.phone}/>)}
+            {sInst.map((inst,i)=><InstRow key={i} inst={inst} custName={cust?.name} custPhone={cust?.phone} onPay={payInst} onUnpay={unpayInst} storeName={storeName||"FITPRO GESTÃO CRM"} showWA={!!cust?.phone}/>)}
           </div>
           {!s.cancelled&&<div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
             <Btn small variant="ghost" onClick={()=>printReceipt(s)}>🖨️ Recibo</Btn>
@@ -1061,8 +1061,8 @@ function AuthScreen({onAuth}){
     <div style={{width:"100%",maxWidth:400}}>
       <div style={{textAlign:"center",marginBottom:32}}>
         <div style={{fontSize:44,marginBottom:8}}>👗</div>
-        <div style={{fontSize:26,fontWeight:900,background:`linear-gradient(90deg,${G.pink},${G.violet})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Fitness CRM</div>
-        <div style={{color:G.muted,fontSize:13,marginTop:4}}>Sistema de gestão para lojas fitness</div>
+        <div style={{fontSize:26,fontWeight:900,background:`linear-gradient(90deg,${G.pink},${G.violet})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>FITPRO GESTÃO CRM</div>
+        <div style={{color:G.muted,fontSize:13,marginTop:4}}>Sistema de gestão comercial completo</div>
       </div>
       <Card style={{display:"flex",flexDirection:"column",gap:14}}>
         <div style={{display:"flex",gap:0,background:G.bg,borderRadius:10,padding:3}}>
@@ -1086,35 +1086,24 @@ function Estoque({products}){
   const [sortBy,setSortBy]=useState("recPot");
   const [catFil,setCatFil]=useState("");
   const [q,setQ]=useState("");
-  const [alertFil,setAlertFil]=useState("todos"); // todos | baixo | semgiro | margem
 
-  const allProds=products.filter(p=>p.active!==false);
-  const cats=[...new Set(allProds.map(p=>p.category))].sort();
+  const activeProds=products.filter(p=>p.active!==false&&p.stock>0);
+  const cats=[...new Set(activeProds.map(p=>p.category))].sort();
 
-  const calcs=allProds.map(p=>{
+  const calcs=activeProds.map(p=>{
     const custoTotal=p.stock*Number(p.cost_price||0);
     const recPot=p.stock*Number(p.sale_price||0);
     const margemBruta=recPot-custoTotal;
     const margemPct=recPot>0?(margemBruta/recPot)*100:0;
-    const semEstoque=p.stock<=0;
-    const baixoEstoque=p.stock>0&&p.stock<=3;
-    const margBaixa=margemPct<15&&recPot>0;
-    return{...p,custoTotal,recPot,margemBruta,margemPct,semEstoque,baixoEstoque,margBaixa};
+    return{...p,custoTotal,recPot,margemBruta,margemPct};
   });
 
-  const comEstoque=calcs.filter(p=>!p.semEstoque);
-  const totalCusto=comEstoque.reduce((a,p)=>a+p.custoTotal,0);
-  const totalRecPot=comEstoque.reduce((a,p)=>a+p.recPot,0);
+  const totalCusto=calcs.reduce((a,p)=>a+p.custoTotal,0);
+  const totalRecPot=calcs.reduce((a,p)=>a+p.recPot,0);
   const totalMargem=totalRecPot-totalCusto;
   const totalMargemPct=totalRecPot>0?(totalMargem/totalRecPot)*100:0;
-  const qtdBaixo=calcs.filter(p=>p.baixoEstoque).length;
-  const qtdSemEstoque=calcs.filter(p=>p.semEstoque).length;
-  const qtdMargBaixa=calcs.filter(p=>p.margBaixa).length;
 
   const filtered=calcs.filter(p=>{
-    if(alertFil==="baixo"&&!p.baixoEstoque)return false;
-    if(alertFil==="semgiro"&&!p.semEstoque)return false;
-    if(alertFil==="margem"&&!p.margBaixa)return false;
     if(catFil&&p.category!==catFil)return false;
     if(q&&!p.name.toLowerCase().includes(q.toLowerCase()))return false;
     return true;
@@ -1122,95 +1111,103 @@ function Estoque({products}){
     if(sortBy==="recPot")return b.recPot-a.recPot;
     if(sortBy==="margem")return b.margemPct-a.margemPct;
     if(sortBy==="custo")return b.custoTotal-a.custoTotal;
-    if(sortBy==="estoque")return b.stock-a.stock;
     return a.name.localeCompare(b.name);
   });
 
-  return(<div style={{display:"flex",flexDirection:"column",gap:12}}>
-    {/* KPIs compactos */}
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:9}}>
-      <Card style={{padding:"11px 13px",borderLeft:`3px solid ${G.amber}`}}>
-        <div style={{color:G.muted,fontSize:10,textTransform:"uppercase"}}>💰 Custo total</div>
-        <div style={{color:G.amber,fontWeight:900,fontSize:16,marginTop:3}}>{R(totalCusto)}</div>
-      </Card>
-      <Card style={{padding:"11px 13px",borderLeft:`3px solid ${G.violet}`}}>
-        <div style={{color:G.muted,fontSize:10,textTransform:"uppercase"}}>📈 Rec. potencial</div>
-        <div style={{color:G.violet,fontWeight:900,fontSize:16,marginTop:3}}>{R(totalRecPot)}</div>
-      </Card>
-      <Card style={{padding:"11px 13px",borderLeft:`3px solid ${G.green}`}}>
-        <div style={{color:G.muted,fontSize:10,textTransform:"uppercase"}}>📊 Margem bruta</div>
-        <div style={{color:G.green,fontWeight:900,fontSize:16,marginTop:3}}>{R(totalMargem)}</div>
-      </Card>
-      <Card style={{padding:"11px 13px",borderLeft:`3px solid ${totalMargemPct>=30?G.green:totalMargemPct>=15?G.amber:G.red}`}}>
-        <div style={{color:G.muted,fontSize:10,textTransform:"uppercase"}}>🎯 Margem %</div>
-        <div style={{color:totalMargemPct>=30?G.green:totalMargemPct>=15?G.amber:G.red,fontWeight:900,fontSize:16,marginTop:3}}>{totalMargemPct.toFixed(1)}%</div>
-      </Card>
+  const lowMargin=calcs.filter(p=>p.margemPct<15);
+  const topRevenue=[...calcs].sort((a,b)=>b.recPot-a.recPot).slice(0,3);
+
+  return(<div style={{display:"flex",flexDirection:"column",gap:14}}>
+    {/* KPIs */}
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(145px,1fr))",gap:10}}>
+      {[
+        ["Custo total estoque",R(totalCusto),G.amber,"💰"],
+        ["Receita potencial",R(totalRecPot),G.violet,"📈"],
+        ["Margem bruta pot.",R(totalMargem),totalMargem>=0?G.green:G.red,"📊"],
+        ["Margem %",totalMargemPct.toFixed(1)+"%",totalMargemPct>=30?G.green:totalMargemPct>=15?G.amber:G.red,"🎯"],
+      ].map(([l,v,col,ic])=>(
+        <Card key={l} style={{borderLeft:`3px solid ${col}`,padding:"13px 14px"}}>
+          <div style={{fontSize:14,marginBottom:4}}>{ic}</div>
+          <div style={{color:G.muted,fontSize:10,textTransform:"uppercase",letterSpacing:.8}}>{l}</div>
+          <div style={{color:col,fontSize:17,fontWeight:900,marginTop:4}}>{v}</div>
+        </Card>
+      ))}
     </div>
 
-    {/* Filtros compactos em um card */}
-    <Card style={{padding:"12px 14px"}}>
-      {/* Alertas rápidos */}
-      <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:10}}>
-        {[
-          ["todos","Todos",G.violet,calcs.length],
-          ["baixo","⚠️ Baixo",G.amber,qtdBaixo],
-          ["semgiro","📉 Sem estoque",G.red,qtdSemEstoque],
-          ["margem","🔴 Mg<15%",G.red,qtdMargBaixa],
-        ].map(([k,l,col,n])=>(
-          <button key={k} onClick={()=>setAlertFil(k)} style={{padding:"5px 11px",borderRadius:20,border:`1px solid ${alertFil===k?col:G.bord}`,background:alertFil===k?col+"22":"transparent",color:alertFil===k?col:G.muted,fontSize:12,cursor:"pointer",fontWeight:alertFil===k?700:400}}>
-            {l} <span style={{opacity:.7}}>({n})</span>
-          </button>
-        ))}
+    {/* Alertas */}
+    {lowMargin.length>0&&<Card style={{borderColor:G.red+"44",background:`${G.red}08`}}>
+      <div style={{color:G.red,fontWeight:700,marginBottom:8,fontSize:13}}>⚠️ Margem abaixo de 15%</div>
+      <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+        {lowMargin.map(p=><Badge key={p.id} color={G.red}>{p.name} — {p.margemPct.toFixed(1)}%</Badge>)}
       </div>
-      {/* Busca + Categoria + Ordenar */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
-        <Inp placeholder="🔍 Buscar..." value={q} onChange={e=>setQ(e.target.value)}/>
+    </Card>}
+
+    <Card>
+      <div style={{fontWeight:700,marginBottom:10,fontSize:14}}>🏆 Maior receita potencial</div>
+      {topRevenue.map((p,i)=>(
+        <div key={p.id} style={{display:"flex",alignItems:"center",gap:10,marginBottom:i<2?10:0}}>
+          <div style={{width:28,height:28,borderRadius:"50%",flexShrink:0,background:PAL[i],display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:13,color:"#fff"}}>{i+1}</div>
+          <div style={{flex:1}}>
+            <div style={{fontSize:13,fontWeight:600}}>{p.name}</div>
+            <div style={{fontSize:11,color:G.muted}}>{p.stock} un. × {R(p.sale_price)}</div>
+          </div>
+          <div style={{textAlign:"right"}}>
+            <div style={{color:G.violet,fontWeight:700,fontSize:14}}>{R(p.recPot)}</div>
+            <div style={{fontSize:11,color:G.muted}}>Mg: {p.margemPct.toFixed(1)}%</div>
+          </div>
+        </div>
+      ))}
+    </Card>
+
+    {/* Filtros */}
+    <Card style={{padding:"12px 14px"}}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:9,marginBottom:9}}>
+        <Inp placeholder="🔍 Buscar produto..." value={q} onChange={e=>setQ(e.target.value)}/>
         <Sel value={catFil} onChange={e=>setCatFil(e.target.value)}>
-          <option value="">Todas categorias</option>
+          <option value="">Todas as categorias</option>
           {cats.map(c=><option key={c} value={c}>{c}</option>)}
         </Sel>
       </div>
-      <div style={{display:"flex",gap:5,flexWrap:"wrap",alignItems:"center"}}>
-        <span style={{color:G.muted,fontSize:11}}>Ordenar:</span>
-        {[["recPot","Rec.Pot"],["margem","Margem"],["custo","Custo"],["estoque","Qtd"],["nome","Nome"]].map(([k,l])=>(
-          <button key={k} onClick={()=>setSortBy(k)} style={{padding:"3px 9px",borderRadius:20,border:"none",background:sortBy===k?G.violet:"#ffffff0e",color:sortBy===k?"#fff":G.muted,fontSize:11,cursor:"pointer",fontWeight:sortBy===k?700:400}}>{l}</button>
+      <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+        <span style={{color:G.muted,fontSize:12,alignSelf:"center"}}>Ordenar:</span>
+        {[["recPot","Rec. Potencial"],["margem","Margem %"],["custo","Custo Total"],["nome","Nome"]].map(([k,l])=>(
+          <button key={k} onClick={()=>setSortBy(k)} style={{padding:"4px 10px",borderRadius:20,border:"none",background:sortBy===k?G.violet:"#ffffff0e",color:sortBy===k?"#fff":G.muted,fontSize:12,cursor:"pointer",fontWeight:sortBy===k?700:400}}>{l}</button>
         ))}
       </div>
     </Card>
 
-    {/* Lista compacta */}
-    <Card style={{padding:"10px 12px"}}>
-      <div style={{display:"flex",justifyContent:"space-between",marginBottom:10,alignItems:"center"}}>
-        <span style={{fontWeight:700,fontSize:13}}>📋 {filtered.length} produto(s)</span>
-        <div style={{display:"flex",gap:12}}>
-          <span style={{color:G.amber,fontSize:11,fontWeight:600}}>Custo: {R(filtered.reduce((a,p)=>a+p.custoTotal,0))}</span>
-          <span style={{color:G.violet,fontSize:11,fontWeight:600}}>Pot: {R(filtered.reduce((a,p)=>a+p.recPot,0))}</span>
+    {/* Tabela */}
+    <Card style={{padding:"12px 14px",overflowX:"auto"}}>
+      <div style={{fontWeight:700,marginBottom:12,fontSize:14}}>📋 Inventário completo ({filtered.length} produtos)</div>
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        <div style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1fr 1fr 1fr",gap:8,padding:"6px 8px",background:"#ffffff08",borderRadius:8}}>
+          {["Produto","Qtd","Custo Unit.","Custo Total","Rec. Potencial","Margem"].map(h=><div key={h} style={{color:G.muted,fontSize:10,textTransform:"uppercase",letterSpacing:.6,fontWeight:700}}>{h}</div>)}
         </div>
-      </div>
-      {filtered.length===0&&<div style={{color:G.muted,textAlign:"center",padding:16,fontSize:13}}>Nenhum produto encontrado.</div>}
-      <div style={{display:"flex",flexDirection:"column",gap:6}}>
+        {filtered.length===0&&<div style={{color:G.muted,textAlign:"center",padding:20}}>Nenhum produto encontrado.</div>}
         {filtered.map(p=>(
-          <div key={p.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",background:"#ffffff06",borderRadius:9,borderLeft:`3px solid ${p.semEstoque?G.muted:p.baixoEstoque?G.red:p.margBaixa?G.amber:G.bord}`}}>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontSize:13,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.name}</div>
+          <div key={p.id} style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1fr 1fr 1fr",gap:8,padding:"8px",background:"#ffffff06",borderRadius:8,borderLeft:`3px solid ${p.margemPct<15?G.red:p.margemPct>=40?G.green:G.bord}`}}>
+            <div>
+              <div style={{fontSize:13,fontWeight:600,lineHeight:1.3}}>{p.name}</div>
               <div style={{fontSize:10,color:G.muted}}>{p.category}</div>
             </div>
-            <div style={{display:"flex",gap:12,flexShrink:0,alignItems:"center"}}>
-              <div style={{textAlign:"center",minWidth:32}}>
-                <div style={{fontSize:12,fontWeight:700,color:p.semEstoque?G.red:p.baixoEstoque?G.amber:G.text}}>{p.stock}</div>
-                <div style={{fontSize:9,color:G.muted}}>Qtd</div>
-              </div>
-              <div style={{textAlign:"right",minWidth:72}}>
-                <div style={{fontSize:12,fontWeight:700,color:G.violet}}>{R(p.recPot)}</div>
-                <div style={{fontSize:9,color:G.muted}}>Rec.Pot</div>
-              </div>
-              <div style={{textAlign:"right",minWidth:42}}>
-                <div style={{fontSize:12,fontWeight:700,color:p.margemPct<15?G.red:p.margemPct>=40?G.green:G.amber}}>{p.margemPct.toFixed(0)}%</div>
-                <div style={{fontSize:9,color:G.muted}}>Mg</div>
-              </div>
+            <div style={{fontSize:13,color:G.text,alignSelf:"center"}}>{p.stock}</div>
+            <div style={{fontSize:13,color:G.muted,alignSelf:"center"}}>{R(p.cost_price)}</div>
+            <div style={{fontSize:13,color:G.amber,fontWeight:600,alignSelf:"center"}}>{R(p.custoTotal)}</div>
+            <div style={{fontSize:13,color:G.violet,fontWeight:600,alignSelf:"center"}}>{R(p.recPot)}</div>
+            <div style={{alignSelf:"center"}}>
+              <div style={{fontSize:13,color:p.margemPct<15?G.red:p.margemPct>=40?G.green:G.amber,fontWeight:700}}>{p.margemPct.toFixed(1)}%</div>
+              <div style={{fontSize:10,color:G.muted}}>{R(p.margemBruta)}</div>
             </div>
           </div>
         ))}
+        {filtered.length>0&&<div style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1fr 1fr 1fr",gap:8,padding:"10px 8px",background:`${G.pink}10`,borderRadius:8,borderTop:`1px solid ${G.bord}`}}>
+          <div style={{fontSize:13,fontWeight:700,color:G.pink}}>TOTAL</div>
+          <div style={{fontSize:13,color:G.muted}}>{filtered.reduce((a,p)=>a+p.stock,0)} un.</div>
+          <div/>
+          <div style={{fontSize:13,color:G.amber,fontWeight:700}}>{R(filtered.reduce((a,p)=>a+p.custoTotal,0))}</div>
+          <div style={{fontSize:13,color:G.violet,fontWeight:700}}>{R(filtered.reduce((a,p)=>a+p.recPot,0))}</div>
+          <div style={{fontSize:13,color:G.green,fontWeight:700}}>{(filtered.reduce((a,p)=>a+p.recPot,0)>0?((filtered.reduce((a,p)=>a+p.margemBruta,0)/filtered.reduce((a,p)=>a+p.recPot,0))*100):0).toFixed(1)}%</div>
+        </div>}
       </div>
     </Card>
   </div>);
@@ -1220,7 +1217,7 @@ const TABS=[{l:"Dashboard",i:"📊"},{l:"Nova Venda",i:"🛒"},{l:"Vendas",i:"�
 
 export default function Page(){
   const [user,setUser]=useState(null);const [storeId,setStoreId]=useState(null);
-  const [storeName,setSName]=useState("Fitness CRM");const [storeSettings,setStoreSettings]=useState({});
+  const [storeName,setSName]=useState("FITPRO GESTÃO CRM");const [storeSettings,setStoreSettings]=useState({});
   const [loading,setLoading]=useState(true);const [rtOk,setRtOk]=useState(false);
   const [tab,setTab]=useState(0);const [tn,setTn]=useState({msg:"",col:G.green});
   const [products,setProducts]=useState([]);const [customers,setCustomers]=useState([]);
@@ -1250,7 +1247,7 @@ export default function Page(){
       if(sid){
         setStoreId(sid);
         const{data:st}=await sb.from("stores").select("*").eq("id",sid).single();
-        if(st){setSName(st.name||"Fitness CRM");setStoreSettings(st);}
+        if(st){setSName(st.name||"FITPRO GESTÃO CRM");setStoreSettings(st);}
         loadAll(sid);
       }
     }catch(e){console.error("initStore error",e);}
@@ -1319,7 +1316,7 @@ export default function Page(){
     </div>
     <div style={{display:"flex",overflowX:"auto",gap:1,padding:"7px 10px",borderBottom:`1px solid ${G.bord}`,background:G.bg,scrollbarWidth:"none"}}>
       {TABS.map((t,i)=>(
-        <button key={i} onClick={()=>setTab(i)} style={{flexShrink:0,display:"flex",alignItems:"center",gap:4,padding:"6px 10px",borderRadius:8,border:"none",background:tab===i?`${G.pink}20`:"transparent",color:tab===i?G.pink:G.muted,fontWeight:tab===i?700:400,fontSize:12,cursor:"pointer",borderBottom:tab===i?`2px solid ${G.pink}`:"2px solid transparent",whiteSpace:"nowrap"}}>
+        <button key={i} onClick={()=>setTab(i)} style={{flexShrink:0,display:"flex",alignItems:"center",gap:4,padding:"7px 12px",borderRadius:8,border:"none",background:tab===i?`${G.pink}28`:"transparent",color:tab===i?G.pink:"#ffffffaa",fontWeight:tab===i?700:500,fontSize:12,cursor:"pointer",borderBottom:tab===i?`2px solid ${G.pink}`:"2px solid transparent",whiteSpace:"nowrap",transition:"color .15s"}}>
           <span>{t.i}</span><span>{t.l}</span>
         </button>
       ))}

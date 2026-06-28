@@ -1101,7 +1101,8 @@ const TABS=[{l:"Dashboard",i:"📊"},{l:"Nova Venda",i:"🛒"},{l:"Vendas",i:"�
 export default function Page(){
   const [user,    setUser]    = useState(null);
   const [storeId, setStoreId] = useState(null);
-  const [storeName,setSName]  = useState("Fitness CRM");
+  const [storeName,setSName]  = useState("FITPRO GESTÃO CRM");
+  const [storeSettings, setStoreSettings] = useState({});
   const [loading, setLoading] = useState(true);
   const [rtOk,    setRtOk]    = useState(false);
   const [tab,     setTab]     = useState(0);
@@ -1131,8 +1132,14 @@ export default function Page(){
 
   const initStore = async(u)=>{
     setUser(u);
-    const{data}=await sb.from("store_users").select("store_id,stores(name)").eq("user_id",u.id).single();
-    if(data){setStoreId(data.store_id);setSName(data.stores?.name||"Fitness CRM");}
+    try{
+      const{data:su}=await sb.from("store_users").select("store_id").eq("user_id",u.id).single();
+      if(su?.store_id){
+        setStoreId(su.store_id);
+        const{data:st}=await sb.from("stores").select("*").eq("id",su.store_id).single();
+        if(st){setSName(st.name||"FITPRO GESTÃO CRM");setStoreSettings(st);}
+      }
+    }catch(e){console.error("initStore",e);}
     setLoading(false);
   };
 

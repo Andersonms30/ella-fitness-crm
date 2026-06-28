@@ -658,6 +658,8 @@ function NewSale({products,customers,storeId,toast,allSales,allInstallments}){
   const [notes,setNotes]=useState("");const [inclPend,setInclPend]=useState(false);
   const [saving,setSaving]=useState(false);
 
+  const [prodCat,setProdCat]=useState("");
+  const [prodQ,setProdQ]=useState("");
   const selC=customers.find(c=>c.id===cId);
   const pendInst=cId?allInstallments.filter(i=>i.customer_id===cId&&!i.paid):[];
   const pendTotal=pendInst.reduce((a,i)=>a+Number(i.amount),0);
@@ -735,10 +737,23 @@ function NewSale({products,customers,storeId,toast,allSales,allInstallments}){
       </Card>
 
       <Card>
-        <Sel label="Adicionar produto" value="" onChange={e=>{if(e.target.value){addItem(e.target.value);e.target.value=""}}}>
-          <option value="">Selecione um produto...</option>
-          {products.filter(p=>p.active).map(p=><option key={p.id} value={p.id}>{p.name} — {R(p.sale_price)}{p.stock<=3?" ⚠️":""}</option>)}
-        </Sel>
+        {(()=>{
+          const cats=[...new Set(products.filter(p=>p.active&&p.stock>0).map(p=>p.category).filter(Boolean))].sort();
+          const filteredProds=products.filter(p=>p.active&&p.stock>0&&(!prodCat||p.category===prodCat)&&(!prodQ||p.name.toLowerCase().includes(prodQ.toLowerCase())));
+          return(<>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:9,marginBottom:9}}>
+              <Sel label="Categoria" value={prodCat} onChange={e=>setProdCat(e.target.value)}>
+                <option value="">Todas as categorias</option>
+                {cats.map(c=><option key={c} value={c}>{c}</option>)}
+              </Sel>
+              <Inp label="Buscar produto" value={prodQ} onChange={e=>setProdQ(e.target.value)} placeholder="Nome..."/>
+            </div>
+            <Sel label="Adicionar produto" value="" onChange={e=>{if(e.target.value){addItem(e.target.value);e.target.value=""}}}>
+              <option value="">Selecione um produto...</option>
+              {filteredProds.map(p=><option key={p.id} value={p.id}>{p.name} — {R(p.sale_price)}{p.stock<=3?` ⚠️(${p.stock})`:""}</option>)}
+            </Sel>
+          </>);
+        })()}
         {items.length>0&&<div style={{marginTop:11,display:"flex",flexDirection:"column",gap:7}}>{items.map(it=>(
           <div key={it.pid} style={{display:"flex",alignItems:"center",gap:8,background:"#ffffff07",borderRadius:9,padding:"7px 10px"}}>
             <span style={{flex:1,fontSize:13,fontWeight:600}}>{it.name}</span>
@@ -924,51 +939,65 @@ function DueDates({installments,customers,storeName,toast}){
 }
 
 // ── Customer Profile ──────────────────────────────────────────
-function CustomerProfile({cust,sales,installments,customers,storeName,toast}){
-  const cSales=sales.filter(s=>s.customer_id===cust.id);
+function CustomerProfile({cust,sales,installments,storeName,toast,vipThreshold}){
+  const cSales=sales.filter(s=>s.customer_id===cust.id&&!s.cancelled);
   const cInst=installments.filter(i=>i.customer_id===cust.id);
   const paid=cInst.filter(i=>i.paid);const pend=cInst.filter(i=>!i.paid);
   const overdue=pend.filter(i=>i.due_date<TODAY());const upcoming=pend.filter(i=>i.due_date>=TODAY());
   const totalSpent=cSales.reduce((a,s)=>a+Number(s.total),0);
   const totalPaid=paid.reduce((a,i)=>a+Number(i.amount),0);
   const totalPend=pend.reduce((a,i)=>a+Number(i.amount),0);
+  const ltv=totalSpent+totalPend;
+  const lastSale=[...cSales].sort((a,b)=>b.date.localeCompare(a.date))[0];
+  const lastDays=lastSale?daysDiff(lastSale.date,TODAY()):null;
   const [tab,setTab]=useState("compras");
   const payInst=async id=>{await sb.from("installments").update({paid:true,paid_at:new Date().toISOString()}).eq("id",id);toast("Pago! ✓");};
+  const unpayInst=async id=>{await sb.from("installments").update({paid:false,paid_at:null}).eq("id",id);toast("Estornado!");};
+
+  // Score automático
+  const scoreLabel=overdue.length>0?"Inadimplente":lastDays!==null&&lastDays>90?"Inativo":totalSpent>=(vipThreshold||500)&&lastDays!==null&&lastDays<=60?"VIP":"Regular";
+  const scoreColor={VIP:G.amber,Regular:G.green,Inativo:G.muted,Inadimplente:G.red}[scoreLabel];
 
   return(
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
-      {/* Header */}
       <Card style={{background:`linear-gradient(135deg,${G.pink}18,${G.violet}18)`,borderColor:G.pink+"33"}}>
         <div style={{display:"flex",gap:14,alignItems:"center",flexWrap:"wrap"}}>
           <div style={{width:56,height:56,borderRadius:"50%",flexShrink:0,background:`linear-gradient(135deg,${G.pink},${G.violet})`,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:900,fontSize:20,color:"#fff"}}>{INI(cust.name)}</div>
           <div style={{flex:1}}>
-            <div style={{fontWeight:800,fontSize:18}}>{cust.name}</div>
-            {cust.phone&&<div style={{color:G.muted,fontSize:13}}>📞 {cust.phone}</div>}
-            {cust.email&&<div style={{color:G.muted,fontSize:13}}>✉️ {cust.email}</div>}
+            <div style={{fontWeight:800,fontSize:18,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+              {cust.name}
+              <Badge color={scoreColor}>{scoreLabel}</Badge>
+            </div>
+            {cust.phone&&<div style={{color:"#ffffff99",fontSize:13}}>📞 {cust.phone}</div>}
+            {cust.email&&<div style={{color:"#ffffff99",fontSize:13}}>✉️ {cust.email}</div>}
+            {cust.origem&&<div style={{color:"#ffffff99",fontSize:13}}>📌 Origem: {cust.origem}</div>}
+            {lastDays!==null&&<div style={{fontSize:12,marginTop:4,color:lastDays>90?G.red:lastDays>30?G.amber:G.green}}>🕐 Última compra: {lastDays===0?"hoje":`há ${lastDays} dias`}</div>}
             {cust.notes&&<div style={{color:G.violet,fontSize:12,marginTop:4}}>📝 {cust.notes}</div>}
           </div>
         </div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))",gap:9,marginTop:14}}>
-          {[["Total gasto",R(totalSpent),G.pink],["Pago",R(totalPaid),G.green],["A vencer",R(upcoming.reduce((a,i)=>a+Number(i.amount),0)),G.violet],["Vencidos",R(overdue.reduce((a,i)=>a+Number(i.amount),0)),G.red]].map(([l,v,col])=>(
+          {[["Total gasto",R(totalSpent),G.pink],["LTV",R(ltv),G.violet],["Pago",R(totalPaid),G.green],["A vencer",R(upcoming.reduce((a,i)=>a+Number(i.amount),0)),G.sky],["Vencidos",R(overdue.reduce((a,i)=>a+Number(i.amount),0)),G.red]].map(([l,v,col])=>(
             <div key={l} style={{background:"#ffffff08",borderRadius:10,padding:"10px 12px"}}>
-              <div style={{color:G.muted,fontSize:10,textTransform:"uppercase",letterSpacing:.7}}>{l}</div>
+              <div style={{color:"#ffffffaa",fontSize:10,textTransform:"uppercase",letterSpacing:.7,fontWeight:600}}>{l}</div>
               <div style={{color:col,fontWeight:800,fontSize:15,marginTop:3}}>{v}</div>
             </div>
           ))}
         </div>
+        {overdue.length>0&&<div style={{marginTop:12,background:`${G.red}18`,border:`1px solid ${G.red}44`,borderRadius:9,padding:"8px 12px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
+          <span style={{color:G.red,fontWeight:700,fontSize:13}}>⚠️ {overdue.length} parcela(s) vencida(s)</span>
+          {cust.phone&&<button onClick={()=>{overdue.forEach(i=>window.open(waLink(cust.phone,cust.name,i.number,i.amount,i.due_date,storeName,true),"_blank"));toast("WhatsApp aberto!");}} style={{background:"#25D36618",border:"1px solid #25D36640",color:"#25D366",borderRadius:7,padding:"5px 12px",fontSize:12,cursor:"pointer",fontWeight:700}}>📱 Cobrar via WhatsApp</button>}
+        </div>}
       </Card>
 
-      {/* Tabs */}
-      <div style={{display:"flex",gap:4}}>
+      <div style={{display:"flex",gap:4,overflowX:"auto"}}>
         {[["compras","🛍️ Compras"],["pagos","✅ Pagos"],["vencidos","🔴 Vencidos"],["avencer","⏳ A vencer"]].map(([k,l])=>(
-          <button key={k} onClick={()=>setTab(k)} style={{flex:1,padding:"8px 4px",borderRadius:9,border:"none",background:tab===k?G.pink+"22":"transparent",color:tab===k?G.pink:G.muted,fontWeight:tab===k?700:400,fontSize:12,cursor:"pointer",borderBottom:tab===k?`2px solid ${G.pink}`:"2px solid transparent"}}>{l}</button>
+          <button key={k} onClick={()=>setTab(k)} style={{flexShrink:0,flex:1,padding:"8px 4px",borderRadius:9,border:"none",background:tab===k?G.pink+"22":"transparent",color:tab===k?G.pink:"#ffffffcc",fontWeight:tab===k?700:500,fontSize:12,cursor:"pointer",borderBottom:tab===k?`2px solid ${G.pink}`:"2px solid transparent"}}>{l}</button>
         ))}
       </div>
 
-      {/* Compras */}
       {tab==="compras"&&<div style={{display:"flex",flexDirection:"column",gap:9}}>
-        {cSales.length===0&&<Card><div style={{color:G.muted,textAlign:"center",padding:24}}>Nenhuma compra registrada.</div></Card>}
-        {cSales.sort((a,b)=>b.date.localeCompare(a.date)).map(s=>{
+        {cSales.length===0&&<Card><div style={{color:"#ffffff66",textAlign:"center",padding:24}}>Nenhuma compra registrada.</div></Card>}
+        {[...cSales].sort((a,b)=>b.date.localeCompare(a.date)).map(s=>{
           const si=installments.filter(i=>i.sale_id===s.id);const pendS=si.filter(i=>!i.paid);
           return(<Card key={s.id}><div style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
             <div><div style={{fontWeight:700,fontSize:14}}>{fmtD(s.date)}</div><div style={{display:"flex",gap:5,marginTop:4,flexWrap:"wrap"}}><Badge color={MC[s.method]}>{METHODS[s.method]}</Badge>{s.installments>1&&<Badge color={G.violet}>{s.installments}x</Badge>}{pendS.length===0&&<Badge color={G.green}>Quitado</Badge>}</div></div>
@@ -977,107 +1006,162 @@ function CustomerProfile({cust,sales,installments,customers,storeName,toast}){
         })}
       </div>}
 
-      {/* Pagos */}
       {tab==="pagos"&&<div style={{display:"flex",flexDirection:"column",gap:7}}>
-        {paid.length===0&&<Card><div style={{color:G.muted,textAlign:"center",padding:24}}>Nenhum pagamento registrado.</div></Card>}
-        {paid.sort((a,b)=>b.paid_at?.localeCompare(a.paid_at||"")).map((i,idx)=><InstRow key={idx} inst={i} showWA={false}/>)}
+        {paid.length===0&&<Card><div style={{color:"#ffffff66",textAlign:"center",padding:24}}>Nenhum pagamento registrado.</div></Card>}
+        {[...paid].sort((a,b)=>b.paid_at?.localeCompare(a.paid_at||"")).map((i,idx)=><InstRow key={idx} inst={i} onUnpay={unpayInst} showWA={false}/>)}
       </div>}
 
-      {/* Vencidos */}
       {tab==="vencidos"&&<div style={{display:"flex",flexDirection:"column",gap:7}}>
         {overdue.length===0&&<Card style={{borderColor:G.green+"44"}}><div style={{color:G.green,textAlign:"center",padding:24}}>✅ Nenhuma parcela vencida!</div></Card>}
-        {overdue.sort((a,b)=>a.due_date.localeCompare(b.due_date)).map((i,idx)=><InstRow key={idx} inst={i} custName={cust.name} custPhone={cust.phone} onPay={payInst} storeName={storeName}/>)}
-        {overdue.length>0&&cust.phone&&<button onClick={()=>{overdue.forEach(i=>window.open(waLink(cust.phone,cust.name,i.number,i.amount,i.due_date,storeName,true),"_blank"));toast("WhatsApp aberto!");}} style={{display:"flex",alignItems:"center",gap:6,background:"#25D36618",border:"1px solid #25D36640",color:"#25D366",borderRadius:8,padding:"8px 14px",fontSize:13,cursor:"pointer",fontWeight:700}}>📱 Cobrar todas via WhatsApp</button>}
+        {[...overdue].sort((a,b)=>a.due_date.localeCompare(b.due_date)).map((i,idx)=><InstRow key={idx} inst={i} custName={cust.name} custPhone={cust.phone} onPay={payInst} storeName={storeName}/>)}
       </div>}
 
-      {/* A vencer */}
       {tab==="avencer"&&<div style={{display:"flex",flexDirection:"column",gap:7}}>
-        {upcoming.length===0&&<Card><div style={{color:G.muted,textAlign:"center",padding:24}}>Nenhuma parcela a vencer.</div></Card>}
-        {upcoming.sort((a,b)=>a.due_date.localeCompare(b.due_date)).map((i,idx)=><InstRow key={idx} inst={i} custName={cust.name} custPhone={cust.phone} onPay={payInst} storeName={storeName}/>)}
+        {upcoming.length===0&&<Card><div style={{color:"#ffffff66",textAlign:"center",padding:24}}>Nenhuma parcela a vencer.</div></Card>}
+        {[...upcoming].sort((a,b)=>a.due_date.localeCompare(b.due_date)).map((i,idx)=><InstRow key={idx} inst={i} custName={cust.name} custPhone={cust.phone} onPay={payInst} storeName={storeName}/>)}
       </div>}
     </div>
   );
 }
 
 // ── Customers ─────────────────────────────────────────────────
-function Customers({customers,sales,installments,storeId,storeName,toast}){
+function Customers({customers,sales,installments,storeId,storeName,toast,storeSettings}){
   const [open,setOpen]=useState(false);const [selected,setSelected]=useState(null);const [edit,setEdit]=useState(null);
-  const [f,setF]=useState({name:"",phone:"",email:"",notes:""});const [q,setQ]=useState("");const [saving,setSaving]=useState(false);
-  const openNew=()=>{setF({name:"",phone:"",email:"",notes:""});setEdit(null);setOpen(true);};
-  const openEdit=c=>{setF({name:c.name,phone:c.phone||"",email:c.email||"",notes:c.notes||""});setEdit(c);setOpen(true);};
+  const [f,setF]=useState({name:"",phone:"",email:"",notes:"",origem:""});
+  const [q,setQ]=useState("");const [catFil,setCatFil]=useState("");const [saving,setSaving]=useState(false);
+  const vipThreshold=storeSettings?.vip_threshold||500;
+
+  // Score automático
+  const scoreCustomer=(c)=>{
+    const cSales=sales.filter(s=>s.customer_id===c.id&&!s.cancelled);
+    const totalSpent=cSales.reduce((a,s)=>a+Number(s.total),0);
+    const pendInst=installments.filter(i=>i.customer_id===c.id&&!i.paid);
+    const overdue=pendInst.filter(i=>i.due_date<TODAY());
+    const lastSale=[...cSales].sort((a,b)=>b.date.localeCompare(a.date))[0];
+    const lastDays=lastSale?daysDiff(lastSale.date,TODAY()):999;
+    if(overdue.length>0)return{label:"Inadimplente",color:G.red};
+    if(lastDays>90)return{label:"Inativo",color:G.muted};
+    if(totalSpent>=vipThreshold&&lastDays<=60)return{label:"VIP",color:G.amber};
+    return{label:"Regular",color:G.green};
+  };
+
+  const openNew=()=>{setF({name:"",phone:"",email:"",notes:"",origem:""});setEdit(null);setOpen(true);};
+  const openEdit=c=>{setF({name:c.name,phone:c.phone||"",email:c.email||"",notes:c.notes||"",origem:c.origem||""});setEdit(c);setOpen(true);};
   const save=async()=>{
     if(!f.name){toast("Nome é obrigatório","#f87171");return;}
     setSaving(true);
-    const d={name:f.name,phone:f.phone,email:f.email,notes:f.notes,store_id:storeId};
+    const d={name:f.name,phone:f.phone,email:f.email,notes:f.notes,origem:f.origem||null,store_id:storeId};
     const{error}=edit?await sb.from("customers").update(d).eq("id",edit.id):await sb.from("customers").insert(d);
     if(error)toast("Erro: "+error.message,"#f87171");else{toast(edit?"Cliente atualizada!":"Cliente cadastrada!");setOpen(false);}
     setSaving(false);
   };
   const del=async id=>{await sb.from("customers").delete().eq("id",id);toast("Removida","#f87171");};
-  const list=customers.filter(c=>c.name.toLowerCase().includes(q.toLowerCase())||c.phone?.includes(q));
+
+  const scored=customers.map(c=>({...c,_score:scoreCustomer(c)}));
+  const list=scored.filter(c=>{
+    if(catFil&&c._score.label!==catFil)return false;
+    return c.name.toLowerCase().includes(q.toLowerCase())||c.phone?.includes(q);
+  });
 
   if(selected){
-    return(
-      <div>
-        <button onClick={()=>setSelected(null)} style={{display:"flex",alignItems:"center",gap:6,background:"transparent",border:"none",color:G.muted,cursor:"pointer",fontSize:13,marginBottom:14}}>← Voltar</button>
-        <CustomerProfile cust={selected} sales={sales} installments={installments} customers={customers} storeName={storeName} toast={toast}/>
-      </div>
-    );
+    return(<div>
+      <button onClick={()=>setSelected(null)} style={{display:"flex",alignItems:"center",gap:6,background:"transparent",border:"none",color:"#ffffffaa",cursor:"pointer",fontSize:13,marginBottom:14}}>← Voltar</button>
+      <CustomerProfile cust={selected} sales={sales} installments={installments} storeName={storeName} toast={toast} vipThreshold={vipThreshold}/>
+    </div>);
   }
 
-  return(
-    <div style={{display:"flex",flexDirection:"column",gap:12}}>
-      <div style={{display:"flex",gap:9}}><Inp placeholder="🔍 Buscar cliente..." value={q} onChange={e=>setQ(e.target.value)} style={{flex:1}}/><Btn onClick={openNew} variant="pink">+ Cliente</Btn></div>
-      {list.map(c=>{
-        const cs=sales.filter(s=>s.customer_id===c.id);const spent=cs.reduce((a,s)=>a+Number(s.total),0);
-        const pendInst=installments.filter(i=>i.customer_id===c.id&&!i.paid);const pendVal=pendInst.reduce((a,i)=>a+Number(i.amount),0);
-        const hasOverdue=pendInst.some(i=>i.due_date<TODAY());
-        return(
-          <Card key={c.id} onClick={()=>setSelected(c)} style={{cursor:"pointer",borderColor:hasOverdue?G.red+"44":G.bord}}>
-            <div style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
-              <div style={{display:"flex",gap:11,alignItems:"center"}}>
-                <div style={{width:44,height:44,borderRadius:"50%",flexShrink:0,background:`linear-gradient(135deg,${G.pink},${G.violet})`,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:15,color:"#fff"}}>{INI(c.name)}</div>
-                <div><div style={{fontWeight:700,fontSize:15}}>{c.name}</div>{c.phone&&<div style={{color:G.muted,fontSize:12}}>📞 {c.phone}</div>}{c.email&&<div style={{color:G.muted,fontSize:12}}>✉️ {c.email}</div>}</div>
-              </div>
-              <div style={{textAlign:"right"}}>
-                <div style={{color:G.pink,fontWeight:800,fontSize:16}}>{R(spent)}</div>
-                <div style={{color:G.muted,fontSize:12}}>{cs.length} compras</div>
-                {pendVal>0&&<div style={{marginTop:3}}><Badge color={hasOverdue?G.red:G.amber}>A receber: {R(pendVal)}</Badge></div>}
-              </div>
-            </div>
-            {c.notes&&<div style={{marginTop:7,color:G.muted,fontSize:12}}>📝 {c.notes}</div>}
-            <div style={{marginTop:10,display:"flex",gap:7}} onClick={e=>e.stopPropagation()}>
-              <Btn small variant="ghost" onClick={()=>openEdit(c)}>✏️ Editar</Btn>
-              <Btn small variant="danger" onClick={()=>del(c.id)}>✕</Btn>
-              <Btn small variant="pink" onClick={()=>setSelected(c)}>Ver perfil →</Btn>
-            </div>
-          </Card>
-        );
-      })}
-      {open&&<Modal title={edit?"Editar Cliente":"Nova Cliente"} onClose={()=>setOpen(false)}>
-        <div style={{display:"flex",flexDirection:"column",gap:11}}>
-          <Inp label="Nome *" value={f.name} onChange={e=>setF({...f,name:e.target.value})} placeholder="Nome completo"/>
-          <Inp label="Telefone (com DDI: 5511999990000)" value={f.phone} onChange={e=>setF({...f,phone:e.target.value})} placeholder="5511999990000"/>
-          <Inp label="E-mail" value={f.email} onChange={e=>setF({...f,email:e.target.value})} placeholder="email@exemplo.com"/>
-          <TA label="Observações" value={f.notes} onChange={e=>setF({...f,notes:e.target.value})} placeholder="Tamanho preferido, gostos, notas..."/>
-          <div style={{display:"flex",gap:9,marginTop:4}}><Btn full onClick={save} variant="pink" disabled={saving}>{saving?<Spin/>:"Salvar"}</Btn><Btn full variant="ghost" onClick={()=>setOpen(false)}>Cancelar</Btn></div>
-        </div>
-      </Modal>}
+  return(<div style={{display:"flex",flexDirection:"column",gap:12}}>
+    <div style={{display:"flex",gap:9}}>
+      <Inp placeholder="🔍 Buscar cliente..." value={q} onChange={e=>setQ(e.target.value)} style={{flex:1}}/>
+      <Btn onClick={openNew} variant="pink">+ Cliente</Btn>
     </div>
-  );
+    {/* Filtro por score */}
+    <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+      {[["","Todas"],["VIP","⭐ VIP"],["Regular","✅ Regular"],["Inativo","😴 Inativo"],["Inadimplente","⚠️ Inadimplente"]].map(([k,l])=>(
+        <button key={k} onClick={()=>setCatFil(k)} style={{padding:"4px 11px",borderRadius:20,border:"none",background:catFil===k?G.pink:"#ffffff10",color:catFil===k?"#fff":"#ffffffcc",fontSize:12,cursor:"pointer",fontWeight:catFil===k?700:400}}>{l}</button>
+      ))}
+    </div>
+    {list.map(c=>{
+      const cSales=sales.filter(s=>s.customer_id===c.id&&!s.cancelled);
+      const spent=cSales.reduce((a,s)=>a+Number(s.total),0);
+      const pendInst=installments.filter(i=>i.customer_id===c.id&&!i.paid);
+      const pendVal=pendInst.reduce((a,i)=>a+Number(i.amount),0);
+      const hasOverdue=pendInst.some(i=>i.due_date<TODAY());
+      const lastSale=[...cSales].sort((a,b)=>b.date.localeCompare(a.date))[0];
+      const lastDays=lastSale?daysDiff(lastSale.date,TODAY()):null;
+      return(
+        <Card key={c.id} onClick={()=>setSelected(c)} style={{cursor:"pointer",borderColor:hasOverdue?G.red+"44":G.bord}}>
+          <div style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
+            <div style={{display:"flex",gap:11,alignItems:"center"}}>
+              <div style={{width:44,height:44,borderRadius:"50%",flexShrink:0,background:`linear-gradient(135deg,${G.pink},${G.violet})`,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:15,color:"#fff"}}>{INI(c.name)}</div>
+              <div>
+                <div style={{fontWeight:700,fontSize:15,display:"flex",alignItems:"center",gap:7,flexWrap:"wrap"}}>
+                  {c.name}
+                  <Badge color={c._score.color}>{c._score.label}</Badge>
+                  {hasOverdue&&<Badge color={G.red}>⚠️ Inadimplente</Badge>}
+                </div>
+                {c.phone&&<div style={{color:"#ffffff88",fontSize:12}}>📞 {c.phone}</div>}
+                <div style={{display:"flex",gap:8,marginTop:3,flexWrap:"wrap"}}>
+                  {lastDays!==null&&<span style={{fontSize:11,color:lastDays>90?G.red:lastDays>30?G.amber:G.green}}>🕐 {lastDays===0?"Comprou hoje":`há ${lastDays} dias`}</span>}
+                  {c.origem&&<span style={{fontSize:11,color:"#ffffff66"}}>📌 {c.origem}</span>}
+                </div>
+              </div>
+            </div>
+            <div style={{textAlign:"right"}}>
+              <div style={{color:G.pink,fontWeight:800,fontSize:16}}>{R(spent)}</div>
+              <div style={{color:"#ffffff88",fontSize:12}}>{cSales.length} compras</div>
+              {pendVal>0&&<div style={{marginTop:3}}><Badge color={hasOverdue?G.red:G.amber}>A receber: {R(pendVal)}</Badge></div>}
+            </div>
+          </div>
+          <div style={{marginTop:10,display:"flex",gap:7}} onClick={e=>e.stopPropagation()}>
+            <Btn small variant="ghost" onClick={()=>openEdit(c)}>✏️ Editar</Btn>
+            <Btn small variant="danger" onClick={()=>del(c.id)}>✕</Btn>
+            <Btn small variant="pink" onClick={()=>setSelected(c)}>Ver perfil →</Btn>
+          </div>
+        </Card>
+      );
+    })}
+    {open&&<Modal title={edit?"Editar Cliente":"Nova Cliente"} onClose={()=>setOpen(false)}>
+      <div style={{display:"flex",flexDirection:"column",gap:11}}>
+        <Inp label="Nome *" value={f.name} onChange={e=>setF({...f,name:e.target.value})} placeholder="Nome completo"/>
+        <Inp label="Telefone (com DDI: 5511999990000)" value={f.phone} onChange={e=>setF({...f,phone:e.target.value})} placeholder="5511999990000"/>
+        <Inp label="E-mail" value={f.email} onChange={e=>setF({...f,email:e.target.value})} placeholder="email@exemplo.com"/>
+        <Sel label="Origem" value={f.origem} onChange={e=>setF({...f,origem:e.target.value})}>
+          <option value="">Selecionar origem...</option>
+          {["Indicação","Instagram","Google","Loja física","WhatsApp","Outro"].map(o=><option key={o} value={o}>{o}</option>)}
+        </Sel>
+        <TA label="Observações" value={f.notes} onChange={e=>setF({...f,notes:e.target.value})} placeholder="Tamanho preferido, gostos, notas..."/>
+        <div style={{background:`${G.violet}12`,borderRadius:9,padding:"9px 12px",fontSize:12,color:"#ffffffaa"}}>💡 A categoria (VIP, Inativo, etc.) é calculada automaticamente pelo histórico de compras.</div>
+        <div style={{display:"flex",gap:9,marginTop:4}}><Btn full onClick={save} variant="pink" disabled={saving}>{saving?<Spin/>:"Salvar"}</Btn><Btn full variant="ghost" onClick={()=>setOpen(false)}>Cancelar</Btn></div>
+      </div>
+    </Modal>}
+  </div>);
 }
 
 // ── Settings ──────────────────────────────────────────────────
-function Settings({storeName,storeId,toast,onSignOut}){
+function Settings({storeName,storeId,toast,onSignOut,storeSettings,onSettingsUpdate}){
   const [name,setName]=useState(storeName);
-  const save=async()=>{await sb.from("stores").update({name}).eq("id",storeId);toast("Salvo! ✓");};
+  const [vipThreshold,setVipThreshold]=useState(storeSettings?.vip_threshold||500);
+  const [monthlyGoal,setMonthlyGoal]=useState(storeSettings?.monthly_goal||"");
+  const save=async()=>{
+    await sb.from("stores").update({name,vip_threshold:+vipThreshold||500,monthly_goal:+monthlyGoal||0}).eq("id",storeId);
+    onSettingsUpdate&&onSettingsUpdate({...storeSettings,name,vip_threshold:+vipThreshold||500,monthly_goal:+monthlyGoal||0});
+    toast("Salvo! ✓");
+  };
   return(
     <div style={{display:"flex",flexDirection:"column",gap:13}}>
       <Card>
         <div style={{fontWeight:700,fontSize:15,marginBottom:12}}>⚙️ Configurações da loja</div>
-        <div style={{display:"flex",gap:9}}>
-          <Inp label="Nome da loja" value={name} onChange={e=>setName(e.target.value)} style={{flex:1}} placeholder="Ex: FitStore Moda Fitness"/>
-          <Btn onClick={save} variant="pink" style={{alignSelf:"flex-end"}}>Salvar</Btn>
+        <div style={{display:"flex",flexDirection:"column",gap:11}}>
+          <Inp label="Nome da loja" value={name} onChange={e=>setName(e.target.value)} placeholder="Ex: Ella Fitness"/>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <Inp label="Meta mensal (R$)" type="number" value={monthlyGoal} onChange={e=>setMonthlyGoal(e.target.value)} placeholder="Ex: 5000" hint="Aparece no Dashboard"/>
+            <Inp label="Threshold VIP (R$)" type="number" value={vipThreshold} onChange={e=>setVipThreshold(e.target.value)} placeholder="Ex: 500" hint="Gasto mínimo para ser VIP"/>
+          </div>
+          <div style={{background:`${G.violet}12`,borderRadius:9,padding:"9px 12px",fontSize:12,color:"#ffffffaa"}}>
+            💡 VIP: gasto total ≥ R${vipThreshold} E última compra há menos de 60 dias. Inativo: sem compras há mais de 90 dias. Inadimplente: parcela(s) vencida(s).
+          </div>
+          <Btn onClick={save} variant="pink">💾 Salvar configurações</Btn>
         </div>
       </Card>
       <Card>
@@ -1172,19 +1256,6 @@ function Estoque({products,sales}){
       ))}
     </div>
 
-    {/* Alertas */}
-    {reorder.length>0&&<Card style={{borderColor:G.red+"44",background:`${G.red}08`}}>
-      <div style={{color:G.red,fontWeight:700,marginBottom:8,fontSize:13}}>🔔 Reposição necessária ({reorder.length} produto{reorder.length>1?"s":""})</div>
-      <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-        {reorder.map(p=><Badge key={p.id} color={G.red}>{p.name} — {p.stock}/{p.min} un.</Badge>)}
-      </div>
-    </Card>}
-    {lowMg.length>0&&<Card style={{borderColor:G.amber+"44",background:`${G.amber}08`}}>
-      <div style={{color:G.amber,fontWeight:700,marginBottom:8,fontSize:13}}>⚠️ Margem abaixo de 15%</div>
-      <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-        {lowMg.map(p=><Badge key={p.id} color={G.amber}>{p.name} — {p.margemPct.toFixed(1)}%</Badge>)}
-      </div>
-    </Card>}
 
     {/* Top 3 */}
     <Card>
@@ -1269,11 +1340,228 @@ function Estoque({products,sales}){
         ))}
       </div>
     </Card>}
+
+    {/* Alertas no final */}
+    {lowMg.length>0&&<Card style={{borderColor:G.amber+"44",background:`${G.amber}08`}}>
+      <div style={{color:G.amber,fontWeight:700,marginBottom:8,fontSize:13}}>⚠️ Margem abaixo de 15%</div>
+      <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+        {lowMg.map(p=><Badge key={p.id} color={G.amber}>{p.name} — {p.margemPct.toFixed(1)}%</Badge>)}
+      </div>
+    </Card>}
+    {reorder.length>0&&<Card style={{borderColor:G.red+"44",background:`${G.red}08`}}>
+      <div style={{color:G.red,fontWeight:700,marginBottom:8,fontSize:13}}>🔔 Reposição necessária ({reorder.length} produto{reorder.length>1?"s":""})</div>
+      <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+        {reorder.map(p=><Badge key={p.id} color={G.red}>{p.name} — {p.stock}/{p.min} un.</Badge>)}
+      </div>
+    </Card>}
   </div>);
 }
 
 
-const TABS=[{l:"Dashboard",i:"📊"},{l:"Nova Venda",i:"🛒"},{l:"Vendas",i:"🧾"},{l:"Vencimentos",i:"📅"},{l:"Clientes",i:"👤"},{l:"Produtos",i:"👗"},{l:"Estoque",i:"📦"},{l:"Custos",i:"💸"},{l:"Config",i:"⚙️"}];
+// ── Reports ───────────────────────────────────────────────────
+function Reports({sales,costs,customers,installments,storeName}){
+  const [month,setMonth]=useState(TODAY().slice(0,7));
+  const [rankTab,setRankTab]=useState("receita");
+
+  // Dados do mês
+  const mSales=sales.filter(s=>s.date.startsWith(month)&&!s.cancelled&&!s.is_quote);
+  const rev=mSales.reduce((a,s)=>a+Number(s.total),0);
+  const cogs=mSales.reduce((a,s)=>a+s.items.reduce((b,i)=>b+Number(i.cost_price||0)*i.quantity,0),0);
+  const lucBruto=rev-cogs;
+  const fixedC=costs.filter(c=>c.type==="fixed"&&c.ref_month===month).reduce((a,c)=>a+Number(c.amount),0);
+  const varC=costs.filter(c=>c.type==="variable"&&c.ref_month===month).reduce((a,c)=>a+Number(c.amount),0);
+  const lucLiq=lucBruto-fixedC-varC;
+  const pctRev=v=>rev>0?`${((v/rev)*100).toFixed(1)}%`:"—";
+
+  // DRE linhas
+  const dreRows=[
+    {label:"Receita Bruta",value:rev,pct:"100%",bold:true,color:G.green,indent:0},
+    {label:"(−) CMV",value:cogs,pct:pctRev(cogs),bold:false,color:G.rose,indent:1},
+    {label:"= Lucro Bruto",value:lucBruto,pct:pctRev(lucBruto),bold:true,color:lucBruto>=0?G.violet:G.red,indent:0},
+    {label:"(−) Custos Fixos",value:fixedC,pct:pctRev(fixedC),bold:false,color:G.amber,indent:1},
+    {label:"(−) Custos Variáveis",value:varC,pct:pctRev(varC),bold:false,color:G.amber,indent:1},
+    {label:"= Lucro Líquido",value:lucLiq,pct:pctRev(lucLiq),bold:true,color:lucLiq>=0?G.green:G.red,indent:0,highlight:true},
+  ];
+
+  // Comparativo 6 meses
+  const last6=Array.from({length:6},(_,i)=>{
+    const d=new Date();d.setDate(1);d.setMonth(d.getMonth()-5+i);
+    const m=d.toISOString().slice(0,7);
+    const ms=sales.filter(s=>s.date.startsWith(m)&&!s.cancelled&&!s.is_quote);
+    const r=ms.reduce((a,s)=>a+Number(s.total),0);
+    const c=ms.reduce((a,s)=>a+s.items.reduce((b,i)=>b+Number(i.cost_price||0)*i.quantity,0),0);
+    const fc=costs.filter(x=>x.type==="fixed"&&x.ref_month===m).reduce((a,x)=>a+Number(x.amount),0);
+    const vc=costs.filter(x=>x.type==="variable"&&x.ref_month===m).reduce((a,x)=>a+Number(x.amount),0);
+    return{mes:fmtMonth(m+"-01"),receita:+r.toFixed(2),lucro:+(r-c-fc-vc).toFixed(2)};
+  });
+
+  // Rankings produtos
+  const prodMap={};
+  mSales.forEach(s=>s.items.forEach(it=>{
+    if(!prodMap[it.product_name])prodMap[it.product_name]={qty:0,rev:0,cost:0};
+    prodMap[it.product_name].qty+=it.quantity;
+    prodMap[it.product_name].rev+=it.quantity*Number(it.unit_price||0);
+    prodMap[it.product_name].cost+=it.quantity*Number(it.cost_price||0);
+  }));
+  const prodsArr=Object.entries(prodMap).map(([n,v])=>({name:n,...v,mg:v.rev>0?((v.rev-v.cost)/v.rev*100):0}));
+  const byRev=[...prodsArr].sort((a,b)=>b.rev-a.rev).slice(0,10);
+  const byMg=[...prodsArr].sort((a,b)=>b.mg-a.mg).slice(0,10);
+  const byQty=[...prodsArr].sort((a,b)=>b.qty-a.qty).slice(0,10);
+  const rankList=rankTab==="receita"?byRev:rankTab==="margem"?byMg:byQty;
+
+  // Inadimplência
+  const cancelledIds=new Set(sales.filter(s=>s.cancelled).map(s=>s.id));
+  const overdueInst=installments.filter(i=>!i.paid&&i.due_date<TODAY()&&!cancelledIds.has(i.sale_id));
+  const byCust={};
+  overdueInst.forEach(i=>{
+    if(!byCust[i.customer_id])byCust[i.customer_id]={items:[],total:0};
+    byCust[i.customer_id].items.push(i);
+    byCust[i.customer_id].total+=Number(i.amount);
+  });
+  const inadimList=Object.entries(byCust).map(([cid,v])=>{
+    const c=customers.find(x=>x.id===cid);
+    const oldest=[...v.items].sort((a,b)=>a.due_date.localeCompare(b.due_date))[0];
+    return{cust:c,total:v.total,dias:daysDiff(oldest.due_date,TODAY()),qtd:v.items.length};
+  }).sort((a,b)=>b.total-a.total);
+  const totalInadim=inadimList.reduce((a,x)=>a+x.total,0);
+
+  // Print PDF
+  const printPDF=()=>{
+    const dreHTML=dreRows.map(r=>`
+      <tr style="background:${r.highlight?"#f0fff4":"white"};font-weight:${r.bold?"700":"400"}">
+        <td style="padding:8px 12px;padding-left:${r.indent?28:12}px;color:#333">${r.label}</td>
+        <td style="padding:8px 12px;text-align:right;color:${r.value<0?"#dc2626":"#16a34a"}">${r.value<0?"-":""} R$ ${Math.abs(r.value).toFixed(2).replace(".",",")}</td>
+        <td style="padding:8px 12px;text-align:right;color:#6b7280">${r.pct}</td>
+      </tr>`).join("");
+    const rankHTML=byRev.map((p,i)=>`<tr><td style="padding:6px 10px">${i+1}. ${p.name}</td><td style="text-align:right;padding:6px 10px">R$ ${p.rev.toFixed(2).replace(".",",")}</td><td style="text-align:right;padding:6px 10px">${p.qty}</td><td style="text-align:right;padding:6px 10px">${p.mg.toFixed(1)}%</td></tr>`).join("");
+    const inadimHTML=inadimList.map(x=>`<tr><td style="padding:6px 10px">${x.cust?.name||"Avulso"}</td><td style="text-align:right;padding:6px 10px;color:#dc2626">R$ ${x.total.toFixed(2).replace(".",",")}</td><td style="text-align:right;padding:6px 10px">${x.dias}d</td><td style="padding:6px 10px">${x.qtd} parcela(s)</td></tr>`).join("");
+    const w=window.open("","_blank");
+    w.document.write(`<!DOCTYPE html><html><head><title>Relatório ${storeName} — ${fmtMonth(month+"-01")}</title>
+    <style>
+      @media print{body{margin:0}@page{margin:20mm}}
+      body{font-family:Arial,sans-serif;color:#222;padding:24px;max-width:800px;margin:0 auto}
+      h1{color:#7c3aed;font-size:22px;margin-bottom:4px}
+      h2{color:#374151;font-size:15px;margin-top:24px;margin-bottom:8px;border-bottom:2px solid #e5e7eb;padding-bottom:4px}
+      table{width:100%;border-collapse:collapse;font-size:13px}
+      th{background:#f3f0ff;padding:8px 12px;text-align:left;color:#374151}
+      td{border-bottom:1px solid #f3f4f6}
+      .footer{margin-top:32px;color:#9ca3af;font-size:11px;text-align:right}
+      .total-row{background:#fdf4ff;font-weight:700}
+    </style>
+    </head><body>
+    <h1>📊 Relatório Gerencial — ${storeName}</h1>
+    <p style="color:#6b7280;font-size:13px;margin:0">Período: ${fmtMonth(month+"-01")} · Gerado em ${new Date().toLocaleString("pt-BR")}</p>
+    <h2>DRE — Demonstrativo de Resultado</h2>
+    <table><tr><th>Indicador</th><th style="text-align:right">Valor</th><th style="text-align:right">% Receita</th></tr>${dreHTML}</table>
+    <h2>Ranking de Produtos — Por Receita</h2>
+    <table><tr><th>Produto</th><th style="text-align:right">Receita</th><th style="text-align:right">Qtd</th><th style="text-align:right">Margem</th></tr>${rankHTML}</table>
+    ${inadimList.length>0?`<h2>Inadimplência</h2><table><tr><th>Cliente</th><th style="text-align:right">Total vencido</th><th style="text-align:right">Atraso</th><th>Parcelas</th></tr>${inadimHTML}<tr class="total-row"><td style="padding:8px 10px">TOTAL</td><td style="text-align:right;padding:8px 10px;color:#dc2626">R$ ${totalInadim.toFixed(2).replace(".",",")}</td><td colspan="2"></td></tr></table>`:""}
+    <div class="footer">FITPRO GESTÃO CRM — ${storeName}</div>
+    </body></html>`);
+    w.document.close();setTimeout(()=>w.print(),400);
+  };
+
+  return(<div style={{display:"flex",flexDirection:"column",gap:14}}>
+    {/* CSS impressão embutido */}
+    <style>{`@media print{.no-print{display:none!important}.print-only{display:block!important}}`}</style>
+
+    {/* Controles */}
+    <div style={{display:"flex",gap:9,alignItems:"flex-end",flexWrap:"wrap"}} className="no-print">
+      <Inp label="Mês" type="month" value={month} onChange={e=>setMonth(e.target.value)} style={{flex:1,maxWidth:220}}/>
+      <Btn onClick={printPDF} variant="pink">🖨️ Exportar PDF</Btn>
+    </div>
+
+    {/* DRE */}
+    <Card>
+      <div style={{fontWeight:700,marginBottom:14,fontSize:15}}>📊 DRE — Demonstrativo de Resultado</div>
+      <div style={{display:"flex",flexDirection:"column",gap:5}}>
+        {dreRows.map((r,i)=>(
+          <div key={i} style={{display:"flex",alignItems:"center",padding:"9px 12px",background:r.highlight?`${r.color}12`:i%2===0?"#ffffff05":"transparent",borderRadius:9,borderLeft:r.highlight||r.bold?`3px solid ${r.color}`:"3px solid transparent",marginLeft:r.indent?16:0}}>
+            <div style={{flex:1,fontSize:r.bold?14:13,fontWeight:r.bold?700:400,color:r.bold?G.text:"#ffffffcc"}}>{r.label}</div>
+            <div style={{minWidth:110,textAlign:"right",fontWeight:r.bold?800:600,fontSize:r.highlight?17:r.bold?15:13,color:r.color}}>{r.value<0?"-":""}{R(Math.abs(r.value))}</div>
+            <div style={{minWidth:55,textAlign:"right",fontSize:11,color:"#ffffff88",marginLeft:12}}>{r.pct}</div>
+          </div>
+        ))}
+      </div>
+    </Card>
+
+    {/* Comparativo 6 meses */}
+    <Card>
+      <div style={{fontWeight:700,marginBottom:12,fontSize:14}}>📈 Comparativo — últimos 6 meses</div>
+      <ResponsiveContainer width="100%" height={200}>
+        <BarChart data={last6} margin={{top:4,right:4,left:-20,bottom:0}}>
+          <XAxis dataKey="mes" tick={{fill:"#ffffffaa",fontSize:10}} axisLine={false} tickLine={false}/>
+          <YAxis tick={{fill:"#ffffffaa",fontSize:9}} axisLine={false} tickLine={false} tickFormatter={v=>`${(v/1000).toFixed(0)}k`}/>
+          <Tooltip formatter={v=>R(v)} contentStyle={{background:G.surf,border:`1px solid ${G.bord}`,borderRadius:8,fontSize:12}}/>
+          <Bar dataKey="receita" name="Receita" fill={G.pink} radius={[4,4,0,0]}/>
+          <Bar dataKey="lucro" name="Lucro Líq." fill={G.green} radius={[4,4,0,0]}/>
+        </BarChart>
+      </ResponsiveContainer>
+      <div style={{display:"flex",gap:14,justifyContent:"center",marginTop:6}}>
+        <span style={{fontSize:12,color:G.pink}}>■ Receita</span>
+        <span style={{fontSize:12,color:G.green}}>■ Lucro Líq.</span>
+      </div>
+    </Card>
+
+    {/* Ranking produtos */}
+    <Card>
+      <div style={{fontWeight:700,marginBottom:10,fontSize:14}}>🏆 Ranking de produtos — top 10</div>
+      <div style={{display:"flex",gap:5,marginBottom:12}}>
+        {[["receita","💰 Por Receita"],["margem","📊 Por Margem"],["qty","📦 Por Qtd"]].map(([k,l])=>(
+          <button key={k} onClick={()=>setRankTab(k)} style={{flex:1,padding:"7px 0",borderRadius:9,border:"none",background:rankTab===k?G.violet:"#ffffff10",color:rankTab===k?"#fff":"#ffffffcc",fontWeight:rankTab===k?700:500,fontSize:12,cursor:"pointer"}}>{l}</button>
+        ))}
+      </div>
+      {rankList.length===0&&<div style={{color:"#ffffff66",textAlign:"center",padding:16}}>Sem vendas no mês.</div>}
+      {rankList.map((p,i)=>(
+        <div key={p.name} style={{display:"flex",alignItems:"center",gap:9,padding:"7px 0",borderBottom:i<rankList.length-1?`1px solid ${G.bord}`:"none"}}>
+          <div style={{width:26,height:26,borderRadius:"50%",flexShrink:0,background:PAL[i%PAL.length],display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,color:"#fff"}}>{i+1}</div>
+          <div style={{flex:1}}>
+            <div style={{fontSize:13,fontWeight:600}}>{p.name}</div>
+            <div style={{fontSize:11,color:"#ffffff88"}}>{p.qty} un. · Mg: {p.mg.toFixed(1)}%</div>
+          </div>
+          <div style={{textAlign:"right"}}>
+            <div style={{color:PAL[i%PAL.length],fontWeight:700,fontSize:13}}>{rankTab==="margem"?p.mg.toFixed(1)+"%":rankTab==="qty"?p.qty+" un.":R(p.rev)}</div>
+            {rankTab!=="qty"&&<div style={{fontSize:10,color:"#ffffff66"}}>{rankTab==="margem"?R(p.rev):p.mg.toFixed(1)+"%"}</div>}
+          </div>
+        </div>
+      ))}
+    </Card>
+
+    {/* Inadimplência */}
+    {inadimList.length>0?<Card style={{borderColor:G.red+"44"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,flexWrap:"wrap",gap:8}}>
+        <div style={{fontWeight:700,fontSize:14,color:G.red}}>⚠️ Relatório de Inadimplência</div>
+        <div style={{textAlign:"right"}}>
+          <div style={{color:G.red,fontWeight:800,fontSize:16}}>{R(totalInadim)}</div>
+          <div style={{color:"#ffffff88",fontSize:11}}>{inadimList.length} cliente(s) em atraso</div>
+        </div>
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:7}}>
+        {inadimList.map((x,i)=>(
+          <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",background:"#ffffff06",borderRadius:9,borderLeft:`3px solid ${x.dias>30?G.red:G.amber}`}}>
+            <div style={{width:36,height:36,borderRadius:"50%",flexShrink:0,background:`linear-gradient(135deg,${G.red},${G.rose})`,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:13,color:"#fff"}}>{INI(x.cust?.name||"?")}</div>
+            <div style={{flex:1}}>
+              <div style={{fontSize:13,fontWeight:700}}>{x.cust?.name||"Avulso"}</div>
+              <div style={{fontSize:11,color:"#ffffff88"}}>{x.qtd} parcela(s) · <span style={{color:x.dias>30?G.red:G.amber}}>{x.dias} dias em atraso</span></div>
+            </div>
+            <div style={{textAlign:"right",marginRight:8}}>
+              <div style={{color:G.red,fontWeight:800,fontSize:15}}>{R(x.total)}</div>
+            </div>
+            {x.cust?.phone&&<button onClick={()=>window.open(`https://wa.me/${x.cust.phone.replace(/\D/g,"")}?text=${encodeURIComponent(`Olá ${x.cust.name.split(" ")[0]}! Você tem ${x.qtd} parcela(s) vencida(s) no valor de ${R(x.total)}. Podemos resolver? 🙏`)}`, "_blank")} style={{background:"#25D36618",border:"1px solid #25D36640",color:"#25D366",borderRadius:8,padding:"6px 10px",fontSize:13,cursor:"pointer",fontWeight:700,flexShrink:0}}>📱</button>}
+          </div>
+        ))}
+        <div style={{display:"flex",justifyContent:"space-between",padding:"10px 12px",background:`${G.red}10`,borderRadius:9,borderTop:`1px solid ${G.red}30`}}>
+          <span style={{fontWeight:700,fontSize:13}}>Total inadimplente</span>
+          <span style={{color:G.red,fontWeight:800,fontSize:15}}>{R(totalInadim)}</span>
+        </div>
+      </div>
+    </Card>:<Card style={{borderColor:G.green+"44",background:`${G.green}08`}}>
+      <div style={{color:G.green,textAlign:"center",padding:16,fontWeight:700}}>✅ Nenhuma inadimplência no sistema!</div>
+    </Card>}
+  </div>);
+}
+
+const TABS=[{l:"Dashboard",i:"📊"},{l:"Nova Venda",i:"🛒"},{l:"Vendas",i:"🧾"},{l:"Vencimentos",i:"📅"},{l:"Clientes",i:"👤"},{l:"Produtos",i:"👗"},{l:"Estoque",i:"📦"},{l:"Custos",i:"💸"},{l:"Relatórios",i:"📋"},{l:"Config",i:"⚙️"}];
 
 export default function Page(){
   const [user,    setUser]    = useState(null);
@@ -1375,11 +1663,12 @@ export default function Page(){
     <NewSale products={products} customers={customers} storeId={storeId} toast={toast} allSales={sales} allInstallments={installments}/>,
     <SalesList sales={sales} customers={customers} installments={installments} storeId={storeId} toast={toast}/>,
     <DueDates installments={installments} customers={customers} storeName={storeName} toast={toast}/>,
-    <Customers customers={customers} sales={sales} installments={installments} storeId={storeId} storeName={storeName} toast={toast}/>,
+    <Customers customers={customers} sales={sales} installments={installments} storeId={storeId} storeName={storeName} toast={toast} storeSettings={storeSettings}/>,
     <Products products={products} storeId={storeId} toast={toast}/>,
     <Estoque products={products} sales={sales}/>,
     <Costs costs={costs} customers={customers} storeId={storeId} toast={toast}/>,
-    <Settings storeName={storeName} storeId={storeId} toast={toast} onSignOut={handleSignOut}/>,
+    <Reports sales={sales} costs={costs} customers={customers} installments={installments} storeName={storeName}/>,
+    <Settings storeName={storeName} storeId={storeId} toast={toast} onSignOut={handleSignOut} storeSettings={storeSettings} onSettingsUpdate={s=>{setStoreSettings(s);setSName(s.name);}}/>,
   ];
 
   return(

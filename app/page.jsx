@@ -255,131 +255,242 @@ function InstRow({inst,custName,custPhone,onPay,storeName,showWA=true}){
 }
 
 // ── Dashboard ─────────────────────────────────────────────────
-function Dashboard({sales,products,customers,costs,installments}){
+function Dashboard({sales,products,customers,costs,installments,storeSettings}){
   const [preset,setPreset]=useState("30d");
   const [df,setDf]=useState(()=>{const d=new Date();d.setDate(d.getDate()-29);return d.toISOString().slice(0,10);});
   const [dt,setDt]=useState(TODAY);
+  const meta=storeSettings?.monthly_goal||0;
 
-  const fSales = sales.filter(s=>s.date>=df&&s.date<=dt);
-  const totalRev  = fSales.reduce((a,s)=>a+Number(s.total),0);
-  const totalCogs = fSales.reduce((a,s)=>a+s.items.reduce((b,i)=>b+Number(i.cost_price)*i.quantity,0),0);
+  // Período atual — só vendas confirmadas (não orçamentos, não canceladas)
+  const fSales=sales.filter(s=>s.date>=df&&s.date<=dt&&!s.cancelled&&!s.is_quote);
+  const fQuotes=sales.filter(s=>s.date>=df&&s.date<=dt&&!s.cancelled&&s.is_quote);
+  const totalRev=fSales.reduce((a,s)=>a+Number(s.total),0);
+  const totalCogs=fSales.reduce((a,s)=>a+s.items.reduce((b,i)=>b+Number(i.cost_price)*i.quantity,0),0);
+  const fixedCosts=costs.filter(c=>c.type==="fixed"&&(!c.ref_month||(c.ref_month>=df.slice(0,7)&&c.ref_month<=dt.slice(0,7)))).reduce((a,c)=>a+Number(c.amount),0);
+  const varCosts=costs.filter(c=>c.type==="variable"&&c.created_at?.slice(0,10)>=df&&c.created_at?.slice(0,10)<=dt).reduce((a,c)=>a+Number(c.amount),0);
+  const totalCosts=totalCogs+fixedCosts+varCosts;
+  const grossMargin=totalRev-totalCogs;
+  const netProfit=totalRev-totalCosts;
+  const marginPct=totalRev?((grossMargin/totalRev)*100).toFixed(1):0;
+  const pendingAll=installments.filter(i=>!i.paid).reduce((a,i)=>a+Number(i.amount),0);
+  const overdueAll=installments.filter(i=>!i.paid&&i.due_date<TODAY()).reduce((a,i)=>a+Number(i.amount),0);
+  const ticketMedio=fSales.length?totalRev/fSales.length:0;
+  const taxaConv=fSales.length+fQuotes.length>0?(fSales.length/(fSales.length+fQuotes.length)*100):0;
 
-  // Costs in period
-  const fixedCosts  = costs.filter(c=>c.type==="fixed"&&(!c.ref_month||(c.ref_month>=df.slice(0,7)&&c.ref_month<=dt.slice(0,7)))).reduce((a,c)=>a+Number(c.amount),0);
-  const varCosts    = costs.filter(c=>c.type==="variable"&&c.created_at.slice(0,10)>=df&&c.created_at.slice(0,10)<=dt).reduce((a,c)=>a+Number(c.amount),0);
-  const totalCosts  = totalCogs + fixedCosts + varCosts;
-  const grossMargin = totalRev - totalCogs;
-  const netProfit   = totalRev - totalCosts;
-  const marginPct   = totalRev ? ((grossMargin/totalRev)*100).toFixed(1) : 0;
+  // Período anterior equivalente
+  const diffDays=Math.max(1,Math.ceil((new Date(dt)-new Date(df))/(86400000)));
+  const prevDt=new Date(df+"T12:00:00");prevDt.setDate(prevDt.getDate()-1);
+  const prevDf=new Date(prevDt);prevDf.setDate(prevDf.getDate()-(diffDays-1));
+  const prevDfStr=prevDf.toISOString().slice(0,10);
+  const prevDtStr=prevDt.toISOString().slice(0,10);
+  const prevSales=sales.filter(s=>s.date>=prevDfStr&&s.date<=prevDtStr&&!s.cancelled&&!s.is_quote);
+  const prevRev=prevSales.reduce((a,s)=>a+Number(s.total),0);
+  const prevCogs=prevSales.reduce((a,s)=>a+s.items.reduce((b,i)=>b+Number(i.cost_price)*i.quantity,0),0);
+  const prevProfit=prevRev-prevCogs;
+  const prevTicket=prevSales.length?prevRev/prevSales.length:0;
 
-  const pendingAll  = installments.filter(i=>!i.paid).reduce((a,i)=>a+Number(i.amount),0);
-  const overdueAll  = installments.filter(i=>!i.paid&&i.due_date<TODAY()).reduce((a,i)=>a+Number(i.amount),0);
+  const varPct=(cur,prev)=>{if(!prev||prev===0)return null;return((cur-prev)/prev*100);};
+  const VarTag=({cur,prev})=>{const v=varPct(cur,prev);if(v===null)return null;const up=v>=0;return <span style={{fontSize:11,fontWeight:700,color:up?G.green:G.red,marginLeft:5,background:up?`${G.green}18`:`${G.red}18`,padding:"2px 6px",borderRadius:10}}>{up?"↑":"↓"}{Math.abs(v).toFixed(1)}%</span>;};
 
-  // Chart
-  const days = Math.min(60,Math.ceil((new Date(dt)-new Date(df))/(86400000))+1);
-  const chartData = Array.from({length:days},(_,i)=>{
+  // Inadimplência proativa
+  const inadimPct=totalRev>0?(overdueAll/totalRev)*100:0;
+
+  // Mini-ranking de vendedores
+  const sellerMap={};fSales.forEach(s=>{if(s.seller_name){sellerMap[s.seller_name]=(sellerMap[s.seller_name]||0)+Number(s.total);}});
+  const sellers=Object.entries(sellerMap).sort((a,b)=>b[1]-a[1]).slice(0,5);
+
+  // Meta
+  const metaPct=meta?Math.min(100,(totalRev/meta)*100):0;
+
+  // Aniversários
+  const todayStr=`${String(new Date().getMonth()+1).padStart(2,"0")}-${String(new Date().getDate()).padStart(2,"0")}`;
+  const birthdays=customers.filter(c=>c.birthday&&c.birthday.slice(5)===todayStr);
+
+  // Gráfico
+  const days=Math.min(60,Math.ceil((new Date(dt)-new Date(df))/(86400000))+1);
+  const chartData=Array.from({length:days},(_,i)=>{
     const d=new Date(df+"T12:00:00");d.setDate(d.getDate()+i);
-    const ds=d.toISOString().slice(0,10);
-    const dayS=fSales.filter(s=>s.date===ds);
-    return {day:d.toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit"}),receita:+dayS.reduce((a,s)=>a+Number(s.total),0).toFixed(2),custo:+dayS.reduce((a,s)=>a+s.items.reduce((b,it)=>b+Number(it.cost_price)*it.quantity,0),0).toFixed(2)};
+    const ds=d.toISOString().slice(0,10);const dayS=fSales.filter(s=>s.date===ds);
+    return{day:d.toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit"}),receita:+dayS.reduce((a,s)=>a+Number(s.total),0).toFixed(2),custo:+dayS.reduce((a,s)=>a+s.items.reduce((b,it)=>b+Number(it.cost_price)*it.quantity,0),0).toFixed(2)};
   });
-
   const catMap={};fSales.forEach(s=>s.items.forEach(it=>{catMap[it.category||"Geral"]=(catMap[it.category||"Geral"]||0)+Number(it.unit_price)*it.quantity;}));
   const pie=Object.entries(catMap).map(([name,value])=>({name,value:+value.toFixed(2)}));
   const mMap={pix:0,debit:0,credit:0,crediario:0};fSales.forEach(s=>{mMap[s.method]=(mMap[s.method]||0)+Number(s.total);});
   const topC=customers.map(c=>{const cs=fSales.filter(s=>s.customer_id===c.id);return{...c,spent:cs.reduce((a,s)=>a+Number(s.total),0),n:cs.length};}).sort((a,b)=>b.spent-a.spent).slice(0,4);
-  const lowStock=products.filter(p=>p.active&&p.stock<=3);
 
-  return(
-    <div style={{display:"flex",flexDirection:"column",gap:14}}>
-      <Card style={{padding:"12px 16px"}}><PeriodPicker df={df} dt={dt} setDf={setDf} setDt={setDt} preset={preset} setPreset={setPreset}/></Card>
+  return(<div style={{display:"flex",flexDirection:"column",gap:14}}>
+    <Card style={{padding:"12px 16px"}}><PeriodPicker df={df} dt={dt} setDf={setDf} setDt={setDt} preset={preset} setPreset={setPreset}/></Card>
 
-      {/* KPIs financeiros */}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:10}}>
-        {[
-          ["Faturamento",R(totalRev),G.pink,"💰"],
-          ["Margem bruta",R(grossMargin)+" ("+marginPct+"%)",G.violet,"📊"],
-          ["Custos totais",R(totalCosts),G.amber,"💸"],
-          ["Lucro líquido",R(netProfit),netProfit>=0?G.green:G.red,"🏆"],
-          ["A receber",R(pendingAll),G.sky,"🕐"],
-          ["Vencidos",R(overdueAll),G.red,"⚠️"],
-        ].map(([l,v,col,ic])=>(
-          <Card key={l} style={{borderLeft:`3px solid ${col}`,padding:"13px 14px"}}>
-            <div style={{fontSize:14,marginBottom:4}}>{ic}</div>
-            <div style={{color:G.muted,fontSize:10,textTransform:"uppercase",letterSpacing:.8}}>{l}</div>
-            <div style={{color:col,fontSize:17,fontWeight:900,marginTop:4,wordBreak:"break-all"}}>{v}</div>
-          </Card>
+    {/* Aniversários */}
+    {birthdays.length>0&&<Card style={{background:"#fbbf2410",borderColor:G.amber+"44"}}>
+      <div style={{fontWeight:700,color:G.amber,marginBottom:8}}>🎂 Aniversários hoje!</div>
+      {birthdays.map(c=><div key={c.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+        <span style={{fontSize:13}}>{c.name}</span>
+        {c.phone&&<button onClick={()=>window.open(waBirthday(c.phone,c.name,storeSettings?.name||"nossa loja"),"_blank")} style={{background:"#25D36618",border:"1px solid #25D36640",color:"#25D366",borderRadius:7,padding:"4px 10px",fontSize:12,cursor:"pointer",fontWeight:700}}>🎉 Parabenizar</button>}
+      </div>)}
+    </Card>}
+
+    {/* Alerta inadimplência proativo */}
+    {inadimPct>10&&<Card style={{background:`${G.red}10`,borderColor:G.red+"55"}}>
+      <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+        <div style={{fontSize:20}}>🚨</div>
+        <div style={{flex:1}}>
+          <div style={{fontWeight:700,color:G.red,fontSize:14}}>Alerta de Inadimplência</div>
+          <div style={{color:G.muted,fontSize:12,marginTop:2}}>Parcelas vencidas representam <span style={{color:G.red,fontWeight:700}}>{inadimPct.toFixed(1)}%</span> da receita — risco de {R(overdueAll)} em perda.</div>
+        </div>
+        <div style={{textAlign:"right"}}><div style={{color:G.red,fontWeight:900,fontSize:18}}>{R(overdueAll)}</div><div style={{color:G.muted,fontSize:11}}>em atraso</div></div>
+      </div>
+    </Card>}
+
+    {/* Meta */}
+    {meta>0&&<Card>
+      <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+        <span style={{fontWeight:700,fontSize:14}}>🎯 Meta do mês</span>
+        <span style={{color:metaPct>=100?G.green:G.amber,fontWeight:700}}>{R(totalRev)} / {R(meta)}</span>
+      </div>
+      <div style={{background:"#ffffff0f",borderRadius:6,height:8,overflow:"hidden"}}>
+        <div style={{height:"100%",borderRadius:6,width:`${metaPct}%`,background:metaPct>=100?`linear-gradient(90deg,${G.green},#059669)`:`linear-gradient(90deg,${G.pink},${G.violet})`,transition:"width .5s"}}/>
+      </div>
+      <div style={{color:G.muted,fontSize:12,marginTop:5}}>{metaPct.toFixed(1)}% da meta atingida</div>
+    </Card>}
+
+    {/* KPIs principais com comparativo */}
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:10}}>
+      {[
+        ["💰","Faturamento",totalRev,prevRev,G.pink],
+        ["🏆","Lucro líquido",netProfit,prevProfit,netProfit>=0?G.green:G.red],
+        ["💸","Custos totais",totalCosts,null,G.amber],
+        ["📊","Margem bruta",grossMargin,null,G.violet],
+        ["🕐","A receber",pendingAll,null,G.sky],
+        ["⚠️","Vencidos",overdueAll,null,G.red],
+      ].map(([ic,l,v,pv,col])=>(
+        <Card key={l} style={{borderLeft:`3px solid ${col}`,padding:"13px 14px"}}>
+          <div style={{fontSize:14,marginBottom:4}}>{ic}</div>
+          <div style={{color:G.muted,fontSize:10,textTransform:"uppercase",letterSpacing:.8}}>{l}</div>
+          <div style={{display:"flex",alignItems:"baseline",flexWrap:"wrap",gap:2,marginTop:4}}>
+            <span style={{color:col,fontSize:17,fontWeight:900}}>{R(v)}</span>
+            {pv!==null&&<VarTag cur={v} prev={pv}/>}
+          </div>
+          {pv!==null&&pv>0&&<div style={{color:G.muted,fontSize:10,marginTop:3}}>Ant: {R(pv)}</div>}
+        </Card>
+      ))}
+    </div>
+
+    {/* KPIs secundários */}
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+      <Card style={{padding:"12px 13px",borderLeft:`3px solid ${G.sky}`}}>
+        <div style={{color:G.muted,fontSize:10,textTransform:"uppercase"}}>🎫 Ticket médio</div>
+        <div style={{display:"flex",alignItems:"baseline",gap:4,marginTop:3}}>
+          <span style={{color:G.sky,fontWeight:800,fontSize:15}}>{R(ticketMedio)}</span>
+          <VarTag cur={ticketMedio} prev={prevTicket}/>
+        </div>
+        <div style={{color:G.muted,fontSize:10,marginTop:2}}>{fSales.length} vendas · Ant: {prevSales.length}</div>
+      </Card>
+      <Card style={{padding:"12px 13px",borderLeft:`3px solid ${G.green}`}}>
+        <div style={{color:G.muted,fontSize:10,textTransform:"uppercase"}}>🎯 Conversão</div>
+        <div style={{color:G.green,fontWeight:800,fontSize:15,marginTop:3}}>{taxaConv.toFixed(1)}%</div>
+        <div style={{color:G.muted,fontSize:10,marginTop:2}}>{fSales.length} vendas · {fQuotes.length} orç.</div>
+      </Card>
+      <Card style={{padding:"12px 13px",borderLeft:`3px solid ${G.violet}`}}>
+        <div style={{color:G.muted,fontSize:10,textTransform:"uppercase"}}>📊 Margem %</div>
+        <div style={{color:G.violet,fontWeight:800,fontSize:15,marginTop:3}}>{marginPct}%</div>
+        <div style={{color:G.muted,fontSize:10,marginTop:2}}>Bruta s/ receita</div>
+      </Card>
+    </div>
+
+    {/* Comparativo período anterior */}
+    <Card style={{background:`${G.violet}08`,borderColor:`${G.violet}30`}}>
+      <div style={{fontWeight:700,fontSize:13,marginBottom:10,color:G.violet}}>📅 vs. período anterior ({fmtD(prevDfStr)} – {fmtD(prevDtStr)})</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+        {[["Receita",totalRev,prevRev,G.pink],["Lucro",netProfit,prevProfit,G.green],["Vendas",fSales.length,prevSales.length,G.violet]].map(([l,cur,prev,col])=>{
+          const v=varPct(cur,prev);const up=v!==null&&v>=0;
+          return(<div key={l} style={{textAlign:"center"}}>
+            <div style={{color:G.muted,fontSize:11}}>{l}</div>
+            <div style={{color:col,fontWeight:700,fontSize:14,marginTop:2}}>{typeof cur==="number"&&cur>100?R(cur):cur}</div>
+            {v!==null&&<div style={{fontSize:12,color:up?G.green:G.red,fontWeight:700,marginTop:2}}>{up?"↑":"↓"}{Math.abs(v).toFixed(1)}%</div>}
+          </div>);
+        })}
+      </div>
+    </Card>
+
+    {/* Custos */}
+    <Card>
+      <div style={{fontWeight:700,fontSize:14,marginBottom:10}}>💸 Composição de custos</div>
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        {[["CMV",totalCogs,G.rose],["Fixos",fixedCosts,G.amber],["Variáveis",varCosts,G.violet]].map(([l,v,col])=>(
+          <div key={l} style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div style={{flex:1}}><div style={{fontSize:13}}>{l}</div>
+              <div style={{height:3,background:G.bord,borderRadius:3,marginTop:4,overflow:"hidden"}}>
+                <div style={{height:"100%",borderRadius:3,background:col,width:`${totalCosts?Math.min(100,(v/totalCosts)*100):0}%`,transition:"width .4s"}}/>
+              </div>
+            </div>
+            <div style={{color:col,fontWeight:700,fontSize:14,minWidth:80,textAlign:"right"}}>{R(v)}</div>
+          </div>
         ))}
       </div>
+    </Card>
 
-      {/* Custos breakdown */}
+    {/* Gráfico */}
+    <Card>
+      <div style={{fontWeight:700,marginBottom:12,fontSize:14}}>📈 Receita vs Custo</div>
+      <ResponsiveContainer width="100%" height={160}>
+        <AreaChart data={chartData} margin={{top:4,right:4,left:-24,bottom:0}}>
+          <defs><linearGradient id="gr" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={G.pink} stopOpacity={0.3}/><stop offset="95%" stopColor={G.pink} stopOpacity={0}/></linearGradient></defs>
+          <XAxis dataKey="day" tick={{fill:G.muted,fontSize:9}} axisLine={false} tickLine={false} interval={Math.max(0,Math.floor(days/6)-1)}/>
+          <YAxis tick={{fill:G.muted,fontSize:9}} axisLine={false} tickLine={false} tickFormatter={v=>`${(v/1000).toFixed(1)}k`}/>
+          <Tooltip formatter={v=>R(v)} contentStyle={{background:G.surf,border:`1px solid ${G.bord}`,borderRadius:8,fontSize:12}}/>
+          <Area type="monotone" dataKey="receita" name="Receita" stroke={G.pink} fill="url(#gr)" strokeWidth={2.5} dot={false}/>
+          <Line type="monotone" dataKey="custo" name="Custo" stroke={G.amber} strokeWidth={1.5} dot={false} strokeDasharray="4 2"/>
+        </AreaChart>
+      </ResponsiveContainer>
+    </Card>
+
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(210px,1fr))",gap:12}}>
       <Card>
-        <div style={{fontWeight:700,fontSize:14,marginBottom:10}}>💸 Composição de custos</div>
-        <div style={{display:"flex",flexDirection:"column",gap:8}}>
-          {[["CMV (custo de mercadoria)",totalCogs,G.rose],["Custos fixos",fixedCosts,G.amber],["Custos variáveis",varCosts,G.violet]].map(([l,v,col])=>(
-            <div key={l} style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <div style={{flex:1}}>
-                <div style={{fontSize:13}}>{l}</div>
-                <div style={{height:3,background:G.bord,borderRadius:3,marginTop:4,overflow:"hidden"}}>
-                  <div style={{height:"100%",borderRadius:3,background:col,width:`${totalCosts?Math.min(100,(v/totalCosts)*100):0}%`,transition:"width .4s"}}/>
-                </div>
-              </div>
-              <div style={{color:col,fontWeight:700,fontSize:14,minWidth:80,textAlign:"right"}}>{R(v)}</div>
+        <div style={{fontWeight:700,marginBottom:10,fontSize:14}}>🏷️ Categorias</div>
+        {pie.length===0?<div style={{color:G.muted,textAlign:"center",padding:18,fontSize:13}}>Sem vendas</div>:
+        <><ResponsiveContainer width="100%" height={120}><PieChart><Pie data={pie} cx="50%" cy="50%" innerRadius={30} outerRadius={50} dataKey="value" paddingAngle={3}>{pie.map((_,i)=><Cell key={i} fill={PAL[i%PAL.length]}/>)}</Pie><Tooltip formatter={v=>R(v)} contentStyle={{background:G.surf,border:`1px solid ${G.bord}`,borderRadius:8,fontSize:12}}/></PieChart></ResponsiveContainer>
+        <div style={{display:"flex",flexWrap:"wrap",gap:5}}>{pie.map((p,i)=><Badge key={p.name} color={PAL[i%PAL.length]}>{p.name}</Badge>)}</div></>}
+      </Card>
+      <Card>
+        <div style={{fontWeight:700,marginBottom:10,fontSize:14}}>💳 Por pagamento</div>
+        <div style={{display:"flex",flexDirection:"column",gap:9}}>
+          {Object.entries(mMap).filter(([,v])=>v>0).map(([m,v])=>(
+            <div key={m} style={{display:"flex",alignItems:"center",gap:9}}>
+              <div style={{width:8,height:8,borderRadius:"50%",background:MC[m],flexShrink:0}}/>
+              <span style={{flex:1,fontSize:13}}>{METHODS[m]}</span>
+              <span style={{color:MC[m],fontWeight:700,fontSize:13}}>{R(v)}</span>
             </div>
           ))}
         </div>
       </Card>
-
-      {lowStock.length>0&&<Card style={{borderColor:G.red+"44",background:`${G.red}08`}}><div style={{color:G.red,fontWeight:700,marginBottom:7,fontSize:13}}>⚠️ Estoque baixo</div><div style={{display:"flex",flexWrap:"wrap",gap:6}}>{lowStock.map(p=><Badge key={p.id} color={G.red}>{p.name} — {p.stock}</Badge>)}</div></Card>}
-
-      {/* Receita x Custo chart */}
-      <Card>
-        <div style={{fontWeight:700,marginBottom:12,fontSize:14}}>📈 Receita vs Custo no período</div>
-        <ResponsiveContainer width="100%" height={160}>
-          <LineChart data={chartData} margin={{top:4,right:4,left:-24,bottom:0}}>
-            <XAxis dataKey="day" tick={{fill:G.muted,fontSize:9}} axisLine={false} tickLine={false} interval={Math.max(0,Math.floor(days/6)-1)}/>
-            <YAxis tick={{fill:G.muted,fontSize:9}} axisLine={false} tickLine={false} tickFormatter={v=>`${(v/1000).toFixed(1)}k`}/>
-            <Tooltip formatter={v=>R(v)} contentStyle={{background:G.surf,border:`1px solid ${G.bord}`,borderRadius:8,fontSize:12}}/>
-            <Line type="monotone" dataKey="receita" name="Receita" stroke={G.pink} strokeWidth={2.5} dot={false} activeDot={{r:4}}/>
-            <Line type="monotone" dataKey="custo" name="Custo" stroke={G.amber} strokeWidth={1.5} dot={false} strokeDasharray="4 2" activeDot={{r:3}}/>
-          </LineChart>
-        </ResponsiveContainer>
-      </Card>
-
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(210px,1fr))",gap:12}}>
-        <Card>
-          <div style={{fontWeight:700,marginBottom:10,fontSize:14}}>🏷️ Categorias</div>
-          {pie.length===0?<div style={{color:G.muted,textAlign:"center",padding:18,fontSize:13}}>Sem vendas</div>:
-          <><ResponsiveContainer width="100%" height={130}><PieChart><Pie data={pie} cx="50%" cy="50%" innerRadius={36} outerRadius={56} dataKey="value" paddingAngle={3}>{pie.map((_,i)=><Cell key={i} fill={PAL[i%PAL.length]}/>)}</Pie><Tooltip formatter={v=>R(v)} contentStyle={{background:G.surf,border:`1px solid ${G.bord}`,borderRadius:8,fontSize:12}}/></PieChart></ResponsiveContainer>
-          <div style={{display:"flex",flexWrap:"wrap",gap:5,marginTop:6}}>{pie.map((p,i)=><Badge key={p.name} color={PAL[i%PAL.length]}>{p.name}</Badge>)}</div></>}
-        </Card>
-        <Card>
-          <div style={{fontWeight:700,marginBottom:10,fontSize:14}}>💳 Por forma de pagamento</div>
-          <div style={{display:"flex",flexDirection:"column",gap:9}}>
-            {Object.entries(mMap).filter(([,v])=>v>0).map(([m,v])=>(
-              <div key={m} style={{display:"flex",alignItems:"center",gap:9}}>
-                <div style={{width:8,height:8,borderRadius:"50%",background:MC[m],flexShrink:0}}/>
-                <span style={{flex:1,fontSize:13}}>{METHODS[m]}</span>
-                <span style={{color:MC[m],fontWeight:700,fontSize:13}}>{R(v)}</span>
-              </div>
-            ))}
-          </div>
-        </Card>
-      </div>
-
-      <Card>
-        <div style={{fontWeight:700,marginBottom:12,fontSize:14}}>⭐ Top clientes no período</div>
-        {topC.filter(c=>c.n>0).length===0?<div style={{color:G.muted,fontSize:13}}>Sem vendas no período.</div>:
-        topC.filter(c=>c.n>0).map((c,i)=>(
-          <div key={c.id} style={{display:"flex",alignItems:"center",gap:10,marginBottom:i<topC.length-1?10:0}}>
-            <div style={{width:32,height:32,borderRadius:"50%",flexShrink:0,background:`linear-gradient(135deg,${PAL[i]},${PAL[(i+3)%PAL.length]})`,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:12,color:"#fff"}}>{INI(c.name)}</div>
-            <div style={{flex:1}}><div style={{fontSize:13,fontWeight:600}}>{c.name}</div><div style={{fontSize:11,color:G.muted}}>{c.n} compra(s)</div></div>
-            <span style={{color:G.pink,fontWeight:800,fontSize:14}}>{R(c.spent)}</span>
-          </div>
-        ))}
-      </Card>
     </div>
-  );
+
+    {/* Top clientes */}
+    <Card>
+      <div style={{fontWeight:700,marginBottom:12,fontSize:14}}>⭐ Top clientes</div>
+      {topC.filter(c=>c.n>0).length===0?<div style={{color:G.muted,fontSize:13}}>Sem vendas no período.</div>:
+      topC.filter(c=>c.n>0).map((c,i)=>(
+        <div key={c.id} style={{display:"flex",alignItems:"center",gap:10,marginBottom:i<3?10:0}}>
+          <div style={{width:32,height:32,borderRadius:"50%",flexShrink:0,background:`linear-gradient(135deg,${PAL[i]},${PAL[(i+3)%PAL.length]})`,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:12,color:"#fff"}}>{INI(c.name)}</div>
+          <div style={{flex:1}}><div style={{fontSize:13,fontWeight:600}}>{c.name}</div><div style={{fontSize:11,color:G.muted}}>{c.n} compra(s)</div></div>
+          <span style={{color:G.pink,fontWeight:800,fontSize:14}}>{R(c.spent)}</span>
+        </div>
+      ))}
+    </Card>
+
+    {/* Mini-ranking vendedores */}
+    {sellers.length>0&&<Card>
+      <div style={{fontWeight:700,marginBottom:10,fontSize:14}}>🏅 Ranking de vendedores</div>
+      {sellers.map(([name,total],i)=>(
+        <div key={name} style={{display:"flex",alignItems:"center",gap:10,marginBottom:i<sellers.length-1?8:0}}>
+          <div style={{width:26,height:26,borderRadius:"50%",flexShrink:0,background:PAL[i%PAL.length],display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:12,color:"#fff"}}>{i+1}</div>
+          <div style={{flex:1,fontSize:13,fontWeight:600}}>{name}</div>
+          <span style={{color:PAL[i%PAL.length],fontWeight:700,fontSize:14}}>{R(total)}</span>
+        </div>
+      ))}
+    </Card>}
+  </div>);
 }
 
 // ── Products ──────────────────────────────────────────────────
@@ -1076,7 +1187,7 @@ export default function Page(){
   if(!user)return(<><style>{`@keyframes spin{to{transform:rotate(360deg)}}*{box-sizing:border-box}`}</style><AuthScreen onAuth={u=>{initStore(u);}}/></>);
 
   const panels=[
-    <Dashboard sales={sales} products={products} customers={customers} costs={costs} installments={installments}/>,
+    <Dashboard sales={sales} products={products} customers={customers} costs={costs} installments={installments} storeSettings={storeSettings}/>,
     <NewSale products={products} customers={customers} storeId={storeId} toast={toast} allSales={sales} allInstallments={installments}/>,
     <SalesList sales={sales} customers={customers} installments={installments} storeId={storeId} toast={toast}/>,
     <DueDates installments={installments} customers={customers} storeName={storeName} toast={toast}/>,
@@ -1101,7 +1212,7 @@ export default function Page(){
       {/* Nav */}
       <div style={{display:"flex",overflowX:"auto",gap:1,padding:"7px 10px",borderBottom:`1px solid ${G.bord}`,background:G.bg,scrollbarWidth:"none"}}>
         {TABS.map((t,i)=>(
-          <button key={i} onClick={()=>setTab(i)} style={{flexShrink:0,display:"flex",alignItems:"center",gap:4,padding:"6px 10px",borderRadius:8,border:"none",background:tab===i?`${G.pink}20`:"transparent",color:tab===i?G.pink:G.muted,fontWeight:tab===i?700:400,fontSize:12,cursor:"pointer",borderBottom:tab===i?`2px solid ${G.pink}`:"2px solid transparent",whiteSpace:"nowrap"}}>
+          <button key={i} onClick={()=>setTab(i)} style={{flexShrink:0,display:"flex",alignItems:"center",gap:4,padding:"7px 12px",borderRadius:8,border:"none",background:tab===i?`${G.pink}28`:"#ffffff0a",color:tab===i?G.pink:"#ffffffcc",fontWeight:tab===i?700:500,fontSize:12,cursor:"pointer",borderBottom:tab===i?`2px solid ${G.pink}`:"2px solid transparent",whiteSpace:"nowrap"}}>
             <span>{t.i}</span><span>{t.l}</span>
           </button>
         ))}

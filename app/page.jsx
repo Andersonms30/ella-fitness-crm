@@ -31,15 +31,9 @@ const TODAY= () => new Date().toISOString().slice(0,10);
 const INI  = s => (s||"?").trim().split(/\s+/).map(w=>w[0]).join("").slice(0,2).toUpperCase();
 const fmtD = d => d ? new Date(d+"T12:00:00").toLocaleDateString("pt-BR") : "—";
 const fmtMonth = d => d ? new Date(d+"T12:00:00").toLocaleDateString("pt-BR",{month:"short",year:"numeric"}) : "";
-const addMonths = (dateStr, n) => {
-  const d = new Date(dateStr+"T12:00:00"); d.setMonth(d.getMonth()+n); return d.toISOString().slice(0,10);
-};
-const dueDateDay = (refDate, monthOffset, day) => {
-  const d = new Date(refDate+"T12:00:00");
-  d.setMonth(d.getMonth()+monthOffset);
-  d.setDate(parseInt(day)||10);
-  return d.toISOString().slice(0,10);
-};
+const daysDiff = (a,b) => Math.ceil((new Date(b)-new Date(a))/(86400000));
+const addMonths=(ds,n)=>{const d=new Date(ds+"T12:00:00");d.setMonth(d.getMonth()+n);return d.toISOString().slice(0,10);};
+const dueDateDay=(ref,mo,day)=>{const d=new Date(ref+"T12:00:00");d.setMonth(d.getMonth()+mo);d.setDate(parseInt(day)||10);return d.toISOString().slice(0,10);};
 
 // ── Primitives ────────────────────────────────────────────────
 const Card = ({children,style,onClick}) => (
@@ -1139,44 +1133,142 @@ function Customers({customers,sales,installments,storeId,storeName,toast,storeSe
 }
 
 // ── Settings ──────────────────────────────────────────────────
-function Settings({storeName,storeId,toast,onSignOut,storeSettings,onSettingsUpdate}){
-  const [name,setName]=useState(storeName);
+function Settings({storeName,storeId,toast,onSignOut,storeSettings,onSettingsUpdate,products,sales,customers}){
+  const [name,setName]=useState(storeName||"");
   const [vipThreshold,setVipThreshold]=useState(storeSettings?.vip_threshold||500);
   const [monthlyGoal,setMonthlyGoal]=useState(storeSettings?.monthly_goal||"");
+  const [stockAlert,setStockAlert]=useState(storeSettings?.stock_alert_default||3);
+  const [modoCaixa,setModoCaixa]=useState(storeSettings?.modo_caixa||false);
+  const [catMetas,setCatMetas]=useState(storeSettings?.cat_metas||{});
+  const [saving,setSaving]=useState(false);
+  const [exporting,setExporting]=useState(false);
+
+  // Categorias disponíveis dos produtos
+  const cats=[...new Set(products.map(p=>p.category).filter(Boolean))].sort();
+
   const save=async()=>{
-    await sb.from("stores").update({name,vip_threshold:+vipThreshold||500,monthly_goal:+monthlyGoal||0}).eq("id",storeId);
-    onSettingsUpdate&&onSettingsUpdate({...storeSettings,name,vip_threshold:+vipThreshold||500,monthly_goal:+monthlyGoal||0});
-    toast("Salvo! ✓");
+    setSaving(true);
+    const payload={
+      name,
+      vip_threshold:+vipThreshold||500,
+      monthly_goal:+monthlyGoal||0,
+      stock_alert_default:+stockAlert||3,
+      modo_caixa:modoCaixa,
+      cat_metas:catMetas,
+    };
+    await sb.from("stores").update(payload).eq("id",storeId);
+    onSettingsUpdate&&onSettingsUpdate({...storeSettings,...payload});
+    toast("Configurações salvas! ✓");
+    setSaving(false);
   };
-  return(
-    <div style={{display:"flex",flexDirection:"column",gap:13}}>
-      <Card>
-        <div style={{fontWeight:700,fontSize:15,marginBottom:12}}>⚙️ Configurações da loja</div>
-        <div style={{display:"flex",flexDirection:"column",gap:11}}>
-          <Inp label="Nome da loja" value={name} onChange={e=>setName(e.target.value)} placeholder="Ex: Ella Fitness"/>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-            <Inp label="Meta mensal (R$)" type="number" value={monthlyGoal} onChange={e=>setMonthlyGoal(e.target.value)} placeholder="Ex: 5000" hint="Aparece no Dashboard"/>
-            <Inp label="Threshold VIP (R$)" type="number" value={vipThreshold} onChange={e=>setVipThreshold(e.target.value)} placeholder="Ex: 500" hint="Gasto mínimo para ser VIP"/>
-          </div>
-          <div style={{background:`${G.violet}12`,borderRadius:9,padding:"9px 12px",fontSize:12,color:"#ffffffaa"}}>
-            💡 VIP: gasto total ≥ R${vipThreshold} E última compra há menos de 60 dias. Inativo: sem compras há mais de 90 dias. Inadimplente: parcela(s) vencida(s).
-          </div>
-          <Btn onClick={save} variant="pink">💾 Salvar configurações</Btn>
+
+  const exportBackup=async()=>{
+    setExporting(true);
+    try{
+      const [s,c,p]=await Promise.all([
+        sb.from("sales").select("*,sale_items(*)").eq("store_id",storeId),
+        sb.from("customers").select("*").eq("store_id",storeId),
+        sb.from("products").select("*").eq("store_id",storeId),
+      ]);
+      const backup={
+        exported_at:new Date().toISOString(),
+        store:{id:storeId,name},
+        sales:s.data||[],
+        customers:c.data||[],
+        products:p.data||[],
+      };
+      const blob=new Blob([JSON.stringify(backup,null,2)],{type:"application/json"});
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement("a");a.href=url;a.download=`backup_${name.replace(/\s+/g,"_")}_${TODAY()}.json`;a.click();URL.revokeObjectURL(url);
+      toast("Backup exportado! ✓");
+    }catch(e){toast("Erro ao exportar: "+e.message,"#f87171");}
+    setExporting(false);
+  };
+
+  return(<div style={{display:"flex",flexDirection:"column",gap:13}}>
+    {/* Dados da loja */}
+    <Card>
+      <div style={{fontWeight:700,fontSize:15,marginBottom:12}}>🏪 Dados da loja</div>
+      <div style={{display:"flex",flexDirection:"column",gap:11}}>
+        <Inp label="Nome da loja" value={name} onChange={e=>setName(e.target.value)} placeholder="Ex: Ella Fitness"/>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+          <Inp label="Meta mensal (R$)" type="number" value={monthlyGoal} onChange={e=>setMonthlyGoal(e.target.value)} placeholder="5000" hint="Barra de progresso no Dashboard"/>
+          <Inp label="⭐ Threshold VIP (R$)" type="number" value={vipThreshold} onChange={e=>setVipThreshold(e.target.value)} placeholder="500" hint="Gasto mínimo para ser VIP"/>
         </div>
-      </Card>
-      <Card>
-        <div style={{fontWeight:700,fontSize:14,marginBottom:10}}>📱 WhatsApp — como funciona</div>
-        {["O botão 📱 abre o WhatsApp Business com mensagem pronta personalizada.","Para parcelas vencidas: mensagem de cobrança amigável.","Para parcelas a vencer: lembrete preventivo.","O telefone deve ter DDI: ex. 5511999990000","Funciona com WhatsApp Business e pessoal."].map((t,i)=>(
-          <div key={i} style={{display:"flex",gap:9,alignItems:"flex-start",marginBottom:7}}><span style={{color:G.pink,fontWeight:700,flexShrink:0}}>✓</span><span style={{color:G.muted,fontSize:13}}>{t}</span></div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+          <Inp label="📦 Estoque mínimo padrão" type="number" value={stockAlert} onChange={e=>setStockAlert(e.target.value)} placeholder="3" hint="Alerta de reposição no Estoque"/>
+          <div style={{display:"flex",flexDirection:"column",gap:4}}>
+            <span style={{color:"#ffffffaa",fontSize:11,textTransform:"uppercase",letterSpacing:.8}}>👁️ Modo Caixa</span>
+            <div style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",background:G.bg,border:`1px solid ${G.bord2}`,borderRadius:9}}>
+              <button onClick={()=>setModoCaixa(!modoCaixa)} style={{width:44,height:24,borderRadius:12,border:"none",background:modoCaixa?G.pink:"#ffffff20",cursor:"pointer",position:"relative",transition:"background .2s",flexShrink:0}}>
+                <div style={{position:"absolute",top:2,left:modoCaixa?22:2,width:20,height:20,borderRadius:"50%",background:"#fff",transition:"left .2s"}}/>
+              </button>
+              <span style={{fontSize:12,color:"#ffffffcc"}}>{modoCaixa?"Ativo — oculta Custos e Relatórios":"Desativado"}</span>
+            </div>
+            <span style={{color:"#ffffff66",fontSize:11}}>Para operadores de caixa</span>
+          </div>
+        </div>
+        <div style={{background:`${G.violet}12`,borderRadius:9,padding:"9px 12px",fontSize:12,color:"#ffffffaa"}}>
+          💡 VIP: gasto ≥ R${vipThreshold} + última compra ≤ 60 dias · Inativo: sem compras &gt; 90 dias · Inadimplente: parcela(s) vencida(s)
+        </div>
+      </div>
+    </Card>
+
+    {/* Metas por categoria */}
+    {cats.length>0&&<Card>
+      <div style={{fontWeight:700,fontSize:15,marginBottom:4}}>🎯 Metas por categoria</div>
+      <div style={{color:"#ffffff88",fontSize:12,marginBottom:12}}>Define uma meta mensal de vendas (R$) por categoria de produto.</div>
+      <div style={{display:"flex",flexDirection:"column",gap:9}}>
+        {cats.map(cat=>{
+          const mSales=sales.filter(s=>s.date.startsWith(TODAY().slice(0,7))&&!s.cancelled&&!s.is_quote);
+          const catRev=mSales.reduce((a,s)=>a+s.items.filter(i=>i.category===cat).reduce((b,i)=>b+i.quantity*Number(i.unit_price||0),0),0);
+          const meta=catMetas[cat]||0;
+          const pct=meta>0?Math.min(100,(catRev/meta)*100):0;
+          return(<div key={cat} style={{background:"#ffffff06",borderRadius:9,padding:"10px 12px"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+              <span style={{fontSize:13,fontWeight:600,color:G.text}}>{cat}</span>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:12,color:G.green}}>{R(catRev)}</span>
+                <span style={{fontSize:12,color:"#ffffff66"}}>/</span>
+                <input type="number" min="0" value={meta||""} placeholder="Meta R$" onChange={e=>setCatMetas({...catMetas,[cat]:+e.target.value||0})} style={{width:90,...iS,padding:"4px 8px",fontSize:12}}/>
+              </div>
+            </div>
+            {meta>0&&<><div style={{height:4,background:"#ffffff10",borderRadius:4,marginTop:8,overflow:"hidden"}}>
+              <div style={{height:"100%",borderRadius:4,width:`${pct}%`,background:pct>=100?`linear-gradient(90deg,${G.green},#059669)`:`linear-gradient(90deg,${G.pink},${G.violet})`,transition:"width .4s"}}/>
+            </div><div style={{fontSize:10,color:"#ffffff66",marginTop:3}}>{pct.toFixed(1)}% da meta do mês</div></>}
+          </div>);
+        })}
+      </div>
+    </Card>}
+
+    {/* Salvar */}
+    <Btn onClick={save} variant="pink" disabled={saving}>{saving?<Spin/>:"💾 Salvar configurações"}</Btn>
+
+    {/* Backup */}
+    <Card>
+      <div style={{fontWeight:700,fontSize:15,marginBottom:8}}>💾 Backup de dados</div>
+      <div style={{color:"#ffffff88",fontSize:13,marginBottom:12}}>Exporta um arquivo JSON com todas as vendas, clientes e produtos da sua loja. Útil para backup ou análise externa.</div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:9,marginBottom:12}}>
+        {[["Vendas",sales.length,G.pink],["Clientes",customers.length,G.violet],["Produtos",products.length,G.green]].map(([l,n,col])=>(
+          <div key={l} style={{background:"#ffffff06",borderRadius:9,padding:"10px 12px",textAlign:"center"}}>
+            <div style={{color:col,fontWeight:800,fontSize:22}}>{n}</div>
+            <div style={{color:"#ffffffaa",fontSize:11,textTransform:"uppercase"}}>{l}</div>
+          </div>
         ))}
-      </Card>
-      <Card style={{background:`${G.green}08`,borderColor:`${G.green}30`}}>
-        <div style={{fontWeight:700,fontSize:14,marginBottom:8,color:G.green}}>🔄 Realtime Supabase</div>
-        <div style={{color:G.muted,fontSize:13}}>Todas as alterações feitas por qualquer usuário (vendas, pagamentos, estoque) são refletidas instantaneamente em todos os dispositivos conectados via WebSocket.</div>
-      </Card>
-      <Btn variant="danger" onClick={onSignOut} style={{alignSelf:"flex-start"}}>Sair da conta</Btn>
-    </div>
-  );
+      </div>
+      <Btn onClick={exportBackup} variant="success" disabled={exporting} full>{exporting?<Spin/>:"📥 Exportar backup JSON"}</Btn>
+    </Card>
+
+    {/* WhatsApp info */}
+    <Card>
+      <div style={{fontWeight:700,fontSize:14,marginBottom:10}}>📱 WhatsApp — como funciona</div>
+      {["O botão 📱 abre o WhatsApp com mensagem personalizada.","Para vencidas: mensagem de cobrança amigável.","Para a vencer: lembrete preventivo.","Telefone deve ter DDI: ex. 5511999990000"].map((t,i)=>(
+        <div key={i} style={{display:"flex",gap:9,alignItems:"flex-start",marginBottom:7}}><span style={{color:G.pink,fontWeight:700,flexShrink:0}}>✓</span><span style={{color:"#ffffffaa",fontSize:13}}>{t}</span></div>
+      ))}
+    </Card>
+
+    <Btn variant="danger" onClick={onSignOut} style={{alignSelf:"flex-start"}}>Sair da conta</Btn>
+  </div>);
 }
 
 // ── Main App ──────────────────────────────────────────────────
@@ -1668,7 +1760,7 @@ export default function Page(){
     <Estoque products={products} sales={sales}/>,
     <Costs costs={costs} customers={customers} storeId={storeId} toast={toast}/>,
     <Reports sales={sales} costs={costs} customers={customers} installments={installments} storeName={storeName}/>,
-    <Settings storeName={storeName} storeId={storeId} toast={toast} onSignOut={handleSignOut} storeSettings={storeSettings} onSettingsUpdate={s=>{setStoreSettings(s);setSName(s.name);}}/>,
+    <Settings storeName={storeName} storeId={storeId} toast={toast} onSignOut={handleSignOut} storeSettings={storeSettings} onSettingsUpdate={s=>{setStoreSettings(s);setSName(s.name);}} products={products} sales={sales} customers={customers}/>,
   ];
 
   return(
@@ -1685,11 +1777,13 @@ export default function Page(){
       </div>
       {/* Nav */}
       <div style={{display:"flex",overflowX:"auto",gap:1,padding:"7px 10px",borderBottom:`1px solid ${G.bord}`,background:G.bg,scrollbarWidth:"none"}}>
-        {TABS.map((t,i)=>(
-          <button key={i} onClick={()=>setTab(i)} style={{flexShrink:0,display:"flex",alignItems:"center",gap:4,padding:"7px 12px",borderRadius:8,border:"none",background:tab===i?`${G.pink}28`:"#ffffff0a",color:tab===i?G.pink:"#ffffffcc",fontWeight:tab===i?700:500,fontSize:12,cursor:"pointer",borderBottom:tab===i?`2px solid ${G.pink}`:"2px solid transparent",whiteSpace:"nowrap"}}>
+        {TABS.map((t,i)=>{
+          // Modo caixa: oculta Custos (idx 7) e Relatórios (idx 8)
+          if(storeSettings?.modo_caixa&&(t.l==="Custos"||t.l==="Relatórios"))return null;
+          return(<button key={i} onClick={()=>setTab(i)} style={{flexShrink:0,display:"flex",alignItems:"center",gap:4,padding:"7px 12px",borderRadius:8,border:"none",background:tab===i?`${G.pink}28`:"#ffffff0a",color:tab===i?G.pink:"#ffffffcc",fontWeight:tab===i?700:500,fontSize:12,cursor:"pointer",borderBottom:tab===i?`2px solid ${G.pink}`:"2px solid transparent",whiteSpace:"nowrap"}}>
             <span>{t.i}</span><span>{t.l}</span>
-          </button>
-        ))}
+          </button>);
+        })}
       </div>
       {/* Content */}
       <div style={{padding:"14px 14px 60px",maxWidth:740,margin:"0 auto"}}>

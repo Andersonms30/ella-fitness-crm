@@ -796,76 +796,155 @@ function NewSale({products,customers,storeId,toast,allSales,allInstallments}){
 const QB={width:26,height:26,borderRadius:6,border:`1px solid ${G.bord2}`,background:"#ffffff0e",color:"#fff",cursor:"pointer",fontSize:14,fontWeight:700,lineHeight:1,flexShrink:0};
 
 // ── Sales List ────────────────────────────────────────────────
-function SalesList({sales,customers,installments,storeId,toast}){
+function SalesList({sales,customers,installments,storeId,toast,storeName,storeSettings}){
   const [df,setDf]=useState("");const [dt,setDt]=useState("");
-  const [cFil,setCFil]=useState("");const [mFil,setMFil]=useState("");const [exp,setExp]=useState(null);
+  const [cFil,setCFil]=useState("");const [mFil,setMFil]=useState("");
+  const [exp,setExp]=useState(null);const [showQuotes,setShowQuotes]=useState(false);
+  const [cancelId,setCancelId]=useState(null);
 
   const list=sales.filter(s=>{
+    if(showQuotes?!s.is_quote:s.is_quote)return false;
+    if(s.cancelled&&!showQuotes)return false;
     if(df&&s.date<df)return false;if(dt&&s.date>dt)return false;
     if(cFil&&s.customer_id!==cFil)return false;if(mFil&&s.method!==mFil)return false;
     return true;
   }).sort((a,b)=>b.date.localeCompare(a.date)||b.created_at?.localeCompare(a.created_at||"")||0);
 
-  const payInst=async(instId)=>{await sb.from("installments").update({paid:true,paid_at:new Date().toISOString()}).eq("id",instId);toast("Parcela paga! ✓");};
+  const payInst=async id=>{await sb.from("installments").update({paid:true,paid_at:new Date().toISOString()}).eq("id",id);toast("Parcela paga! ✓");};
+  const unpayInst=async id=>{await sb.from("installments").update({paid:false,paid_at:null}).eq("id",id);toast("Estorno realizado!");};
 
-  return(
-    <div style={{display:"flex",flexDirection:"column",gap:12}}>
-      <Card style={{padding:"12px 14px"}}>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:9,marginBottom:9}}>
-          <Inp label="De" type="date" value={df} onChange={e=>setDf(e.target.value)}/><Inp label="Até" type="date" value={dt} onChange={e=>setDt(e.target.value)}/>
-        </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:9}}>
-          <Sel label="Cliente" value={cFil} onChange={e=>setCFil(e.target.value)}><option value="">Todos</option>{customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</Sel>
-          <Sel label="Pagamento" value={mFil} onChange={e=>setMFil(e.target.value)}><option value="">Todos</option>{Object.entries(METHODS).map(([k,v])=><option key={k} value={k}>{v}</option>)}</Sel>
-        </div>
-      </Card>
-      {list.length===0&&<Card><div style={{color:G.muted,textAlign:"center",padding:28}}>Nenhuma venda encontrada.</div></Card>}
-      {list.map(s=>{
-        const cust=customers.find(c=>c.id===s.customer_id);
-        const sInst=installments.filter(i=>i.sale_id===s.id);
-        const pend=sInst.filter(i=>!i.paid);
-        const hasOverdue=pend.some(i=>i.due_date<TODAY());
-        const expanded=exp===s.id;
-        return(
-          <Card key={s.id} style={{borderColor:hasOverdue?G.red+"44":G.bord}}>
-            <div style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8,cursor:"pointer"}} onClick={()=>setExp(expanded?null:s.id)}>
-              <div>
-                <div style={{fontWeight:700,fontSize:14}}>{fmtD(s.date)} — {cust?.name||"Avulso"}</div>
-                <div style={{display:"flex",gap:5,marginTop:5,flexWrap:"wrap"}}>
-                  <Badge color={MC[s.method]}>{METHODS[s.method]}</Badge>
-                  {s.installments>1&&<Badge color={G.violet}>{s.installments}x de {R(s.total/s.installments)}</Badge>}
-                  {hasOverdue&&<Badge color={G.red}>Vencida</Badge>}
-                </div>
+  const cancelSale=async id=>{
+    const s=sales.find(x=>x.id===id);if(!s)return;
+    await sb.from("sales").update({cancelled:true}).eq("id",id);
+    await sb.from("installments").update({paid:true}).eq("sale_id",id);
+    toast("Venda cancelada!","#fbbf24");setCancelId(null);
+  };
+
+  const convertQuote=async id=>{
+    await sb.from("sales").update({is_quote:false}).eq("id",id);
+    toast("Orçamento convertido em venda! ✓");
+  };
+
+  const printReceipt=(s)=>{
+    const cust=customers.find(c=>c.id===s.customer_id);
+    const loja=storeName||"FitPro Gestão CRM";
+    const w=window.open("","_blank");
+    w.document.write(`<!DOCTYPE html><html><head><title>Recibo</title>
+    <style>
+      @media print{body{margin:0}@page{margin:15mm}}
+      body{font-family:Arial,sans-serif;max-width:380px;margin:0 auto;padding:20px;color:#222;font-size:13px}
+      h2{text-align:center;color:#7c3aed;margin:0 0 4px}
+      .sub{text-align:center;color:#888;font-size:11px;margin-bottom:16px}
+      hr{border:none;border-top:1px dashed #ccc;margin:12px 0}
+      .row{display:flex;justify-content:space-between;margin:4px 0}
+      .total{font-size:18px;font-weight:700;color:#7c3aed}
+      .footer{text-align:center;color:#aaa;font-size:11px;margin-top:16px}
+      table{width:100%;border-collapse:collapse}td{padding:4px 0}
+    </style></head><body>
+    <h2>${loja}</h2>
+    <div class="sub">Comprovante de Venda</div>
+    <hr>
+    <div class="row"><span><b>Cliente:</b></span><span>${cust?.name||"Avulso"}</span></div>
+    <div class="row"><span><b>Data:</b></span><span>${fmtD(s.date)}</span></div>
+    <div class="row"><span><b>Pagamento:</b></span><span>${METHODS[s.method]}</span></div>
+    ${s.installments>1?`<div class="row"><span><b>Parcelas:</b></span><span>${s.installments}x de ${R(s.total/s.installments)}</span></div>`:""}
+    <hr>
+    <table>
+      ${s.items.map(it=>`<tr><td>${it.quantity}x ${it.product_name}</td><td style="text-align:right">${R(it.quantity*Number(it.unit_price))}</td></tr>`).join("")}
+    </table>
+    <hr>
+    ${s.discount>0?`<div class="row"><span>Desconto:</span><span style="color:#16a34a">-${R(s.discount)}</span></div>`:""}
+    <div class="row total"><span>TOTAL</span><span>${R(s.total)}</span></div>
+    ${s.notes?`<hr><div style="color:#666;font-size:11px">Obs: ${s.notes}</div>`:""}
+    <div class="footer">Obrigado pela preferencia! 💜<br>${loja}</div>
+    <script>window.onload=()=>window.print();</script>
+    </body></html>`);
+    w.document.close();
+  };
+
+  return(<div style={{display:"flex",flexDirection:"column",gap:12}}>
+    {/* Toggle Vendas / Orçamentos */}
+    <div style={{display:"flex",gap:7}}>
+      <button onClick={()=>setShowQuotes(false)} style={{flex:1,padding:"9px 0",borderRadius:9,border:"none",background:!showQuotes?G.pink:"#ffffff10",color:!showQuotes?"#fff":"#ffffffcc",fontWeight:!showQuotes?700:500,fontSize:13,cursor:"pointer"}}>🧾 Vendas</button>
+      <button onClick={()=>setShowQuotes(true)} style={{flex:1,padding:"9px 0",borderRadius:9,border:"none",background:showQuotes?G.violet:"#ffffff10",color:showQuotes?"#fff":"#ffffffcc",fontWeight:showQuotes?700:500,fontSize:13,cursor:"pointer"}}>📋 Orçamentos</button>
+    </div>
+
+    {/* Filtros */}
+    <Card style={{padding:"12px 14px"}}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:9,marginBottom:9}}>
+        <Inp label="De" type="date" value={df} onChange={e=>setDf(e.target.value)}/>
+        <Inp label="Até" type="date" value={dt} onChange={e=>setDt(e.target.value)}/>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:9}}>
+        <Sel label="Cliente" value={cFil} onChange={e=>setCFil(e.target.value)}><option value="">Todos</option>{customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</Sel>
+        <Sel label="Pagamento" value={mFil} onChange={e=>setMFil(e.target.value)}><option value="">Todos</option>{Object.entries(METHODS).map(([k,v])=><option key={k} value={k}>{v}</option>)}</Sel>
+      </div>
+    </Card>
+
+    {list.length===0&&<Card><div style={{color:"#ffffff66",textAlign:"center",padding:28}}>Nenhum{showQuotes?" orçamento":" venda"} encontrado.</div></Card>}
+
+    {list.map(s=>{
+      const cust=customers.find(c=>c.id===s.customer_id);
+      const sInst=installments.filter(i=>i.sale_id===s.id);
+      const pend=sInst.filter(i=>!i.paid);
+      const hasOverdue=pend.some(i=>i.due_date<TODAY());
+      const expanded=exp===s.id;
+      return(
+        <Card key={s.id} style={{borderColor:s.cancelled?G.red+"44":hasOverdue?G.amber+"44":G.bord,opacity:s.cancelled?.7:1}}>
+          <div style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8,cursor:"pointer"}} onClick={()=>setExp(expanded?null:s.id)}>
+            <div>
+              <div style={{fontWeight:700,fontSize:14,display:"flex",alignItems:"center",gap:7,flexWrap:"wrap"}}>
+                {fmtD(s.date)} — {cust?.name||"Avulso"}
+                {s.cancelled&&<Badge color={G.red}>Cancelada</Badge>}
+                {s.is_quote&&<Badge color={G.violet}>Orçamento</Badge>}
               </div>
-              <div style={{textAlign:"right"}}>
-                <div style={{color:G.pink,fontWeight:800,fontSize:17}}>{R(s.total)}</div>
-                <div style={{color:G.muted,fontSize:12}}>{pend.length>0?`${pend.length} pendente(s)`:"✓ Quitado"}</div>
-                <div style={{color:G.muted,fontSize:11,marginTop:2}}>{expanded?"▲ Ocultar":"▼ Detalhes"}</div>
+              <div style={{display:"flex",gap:5,marginTop:5,flexWrap:"wrap"}}>
+                <Badge color={MC[s.method]}>{METHODS[s.method]}</Badge>
+                {s.installments>1&&<Badge color={G.violet}>{s.installments}x de {R(s.total/s.installments)}</Badge>}
+                {hasOverdue&&<Badge color={G.red}>⚠️ Vencida</Badge>}
               </div>
             </div>
-            {expanded&&(
-              <div style={{marginTop:12}}>
-                <Divider/>
-                <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:10}}>
-                  {s.items.map((it,i)=><Badge key={i} color="#ffffff25">{it.quantity}x {it.product_name}</Badge>)}
-                </div>
-                <div style={{display:"flex",justifyContent:"space-between",color:G.muted,fontSize:12,marginBottom:8}}>
-                  <span>CMV: {R(s.total_cost)}</span>
-                  <span>Margem: {R(Number(s.total)-Number(s.total_cost))} ({pct(Number(s.total)-Number(s.total_cost),Number(s.total))})</span>
-                </div>
-                <div style={{display:"flex",flexDirection:"column",gap:7}}>
-                  {sInst.map((inst,i)=>(
-                    <InstRow key={i} inst={inst} custName={cust?.name} custPhone={cust?.phone} onPay={payInst} storeName="Fitness Store" showWA={!!cust?.phone}/>
-                  ))}
-                </div>
-                {s.notes&&<div style={{marginTop:10,color:G.muted,fontSize:12}}>📝 {s.notes}</div>}
-              </div>
-            )}
-          </Card>
-        );
-      })}
-    </div>
-  );
+            <div style={{textAlign:"right"}}>
+              <div style={{color:G.pink,fontWeight:800,fontSize:17}}>{R(s.total)}</div>
+              <div style={{color:"#ffffff88",fontSize:12}}>{pend.length>0?`${pend.length} pendente(s)`:"✓ Quitado"}</div>
+              <div style={{color:"#ffffff66",fontSize:11,marginTop:2}}>{expanded?"▲ Ocultar":"▼ Detalhes"}</div>
+            </div>
+          </div>
+
+          {expanded&&<div style={{marginTop:12}}>
+            <Divider/>
+            <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:8}}>
+              {s.items.map((it,i)=><Badge key={i} color="#ffffff22">{it.quantity}x {it.product_name}</Badge>)}
+            </div>
+            {s.total_cost>0&&<div style={{color:"#ffffff66",fontSize:12,marginBottom:8}}>
+              CMV: {R(s.total_cost)} · Margem: {R(Number(s.total)-Number(s.total_cost))} ({pct(Number(s.total)-Number(s.total_cost),Number(s.total))})
+            </div>}
+            {s.notes&&<div style={{color:"#ffffff88",fontSize:12,marginBottom:8}}>📝 {s.notes}</div>}
+            <div style={{display:"flex",flexDirection:"column",gap:7,marginBottom:10}}>
+              {sInst.map((inst,i)=><InstRow key={i} inst={inst} custName={cust?.name} custPhone={cust?.phone} onPay={payInst} onUnpay={unpayInst} storeName={storeName||"FitPro"} showWA={!!cust?.phone}/>)}
+            </div>
+            {/* Ações */}
+            {!s.cancelled&&<div style={{display:"flex",gap:7,flexWrap:"wrap",paddingTop:10,borderTop:`1px solid ${G.bord}`}}>
+              <Btn small variant="ghost" onClick={()=>printReceipt(s)}>🖨️ Imprimir recibo</Btn>
+              {s.is_quote&&<Btn small variant="success" onClick={()=>convertQuote(s.id)}>✓ Converter em venda</Btn>}
+              {!s.is_quote&&<Btn small variant="danger" onClick={()=>setCancelId(s.id)}>✕ Cancelar venda</Btn>}
+            </div>}
+          </div>}
+        </Card>
+      );
+    })}
+
+    {/* Modal cancelar */}
+    {cancelId&&<Modal title="Cancelar venda?" onClose={()=>setCancelId(null)}>
+      <div style={{display:"flex",flexDirection:"column",gap:14}}>
+        <p style={{color:"#ffffffaa",fontSize:14,margin:0}}>Esta acao nao pode ser desfeita. O estoque nao sera devolvido automaticamente.</p>
+        <div style={{display:"flex",gap:9}}>
+          <Btn full variant="danger" onClick={()=>cancelSale(cancelId)}>Confirmar cancelamento</Btn>
+          <Btn full variant="ghost" onClick={()=>setCancelId(null)}>Voltar</Btn>
+        </div>
+      </div>
+    </Modal>}
+  </div>);
 }
 
 // ── Due Dates ─────────────────────────────────────────────────
@@ -1008,6 +1087,7 @@ function CustomerProfile({cust,sales,installments,storeName,toast,vipThreshold})
       {tab==="vencidos"&&<div style={{display:"flex",flexDirection:"column",gap:7}}>
         {overdue.length===0&&<Card style={{borderColor:G.green+"44"}}><div style={{color:G.green,textAlign:"center",padding:24}}>✅ Nenhuma parcela vencida!</div></Card>}
         {[...overdue].sort((a,b)=>a.due_date.localeCompare(b.due_date)).map((i,idx)=><InstRow key={idx} inst={i} custName={cust.name} custPhone={cust.phone} onPay={payInst} storeName={storeName}/>)}
+        {overdue.length>0&&cust.phone&&<button onClick={()=>{overdue.forEach(i=>window.open(waLink(cust.phone,cust.name,i.number,i.amount,i.due_date,storeName,true),"_blank"));toast("WhatsApp aberto!");}} style={{display:"flex",alignItems:"center",gap:8,background:"#25D36618",border:"1px solid #25D36640",color:"#25D366",borderRadius:9,padding:"10px 16px",fontSize:13,cursor:"pointer",fontWeight:700,marginTop:4}}>📱 Cobrar todas vencidas via WhatsApp ({overdue.length})</button>}
       </div>}
 
       {tab==="avencer"&&<div style={{display:"flex",flexDirection:"column",gap:7}}>
@@ -1653,7 +1733,100 @@ function Reports({sales,costs,customers,installments,storeName}){
   </div>);
 }
 
-const TABS=[{l:"Dashboard",i:"📊"},{l:"Nova Venda",i:"🛒"},{l:"Vendas",i:"🧾"},{l:"Vencimentos",i:"📅"},{l:"Clientes",i:"👤"},{l:"Produtos",i:"👗"},{l:"Estoque",i:"📦"},{l:"Custos",i:"💸"},{l:"Relatórios",i:"📋"},{l:"Config",i:"⚙️"}];
+// ── WhatsApp Messages ─────────────────────────────────────────
+function WhatsAppMessages({storeSettings,storeId,toast,customers,installments,storeName}){
+  const def={
+    overdue:`Olá {nome}! 😊 Aqui é da {loja}. A parcela {parcela} no valor de {valor} venceu em {vencimento}. Podemos resolver? 🙏`,
+    upcoming:`Olá {nome}! 😊 Aqui é da {loja}. Lembrete: sua parcela {parcela} de {valor} vence em {vencimento}. Qualquer dúvida fale comigo! 💪`,
+    birthday:`Feliz aniversário, {nome}! 🎉🎂 Toda a equipe da {loja} deseja um dia incrível! Como presente especial, temos novidades esperando por você. 💗`,
+  };
+  const [msgs,setMsgs]=useState({
+    overdue:storeSettings?.wa_overdue||def.overdue,
+    upcoming:storeSettings?.wa_upcoming||def.upcoming,
+    birthday:storeSettings?.wa_birthday||def.birthday,
+  });
+  const [saving,setSaving]=useState(false);
+  const [preview,setPreview]=useState(null);
+
+  const vars={"{nome}":"Ana Silva","{loja}":storeName||"FitPro","{parcela}":"2","{valor}":"R$ 150,00","{vencimento}":"10/07/2026"};
+  const renderPreview=t=>Object.entries(vars).reduce((s,[k,v])=>s.replaceAll(k,v),t);
+
+  const save=async()=>{
+    setSaving(true);
+    await sb.from("stores").update({wa_overdue:msgs.overdue,wa_upcoming:msgs.upcoming,wa_birthday:msgs.birthday}).eq("id",storeId);
+    toast("Mensagens salvas! ✓");
+    setSaving(false);
+  };
+
+  const reset=key=>setMsgs({...msgs,[key]:def[key]});
+
+  const TYPES=[
+    {key:"overdue",icon:"⚠️",label:"Cobrança — Vencida",color:G.red,desc:"Enviada quando uma parcela já passou do vencimento."},
+    {key:"upcoming",icon:"⏰",label:"Lembrete — A vencer",color:G.amber,desc:"Lembrete preventivo antes do vencimento."},
+    {key:"birthday",icon:"🎂",label:"Feliz Aniversário",color:G.pink,desc:"Enviada automaticamente para clientes aniversariantes."},
+  ];
+
+  // Clientes com parcelas vencidas para teste rápido
+  const overdueCustomers=customers.filter(c=>{
+    return installments.some(i=>i.customer_id===c.id&&!i.paid&&i.due_date<TODAY());
+  }).slice(0,3);
+
+  return(<div style={{display:"flex",flexDirection:"column",gap:14}}>
+    {/* Variáveis disponíveis */}
+    <Card style={{background:`${G.violet}08`,borderColor:`${G.violet}30`}}>
+      <div style={{fontWeight:700,fontSize:13,marginBottom:8,color:G.violet}}>📌 Variáveis disponíveis nas mensagens</div>
+      <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+        {Object.keys(vars).map(v=><Badge key={v} color={G.violet}>{v}</Badge>)}
+      </div>
+      <div style={{color:"#ffffff88",fontSize:12,marginTop:8}}>Essas variáveis são substituídas automaticamente pelo sistema ao enviar a mensagem.</div>
+    </Card>
+
+    {/* Editor de cada mensagem */}
+    {TYPES.map(({key,icon,label,color,desc})=>(
+      <Card key={key} style={{borderColor:color+"33"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,flexWrap:"wrap",gap:8}}>
+          <div>
+            <div style={{fontWeight:700,fontSize:14}}>{icon} {label}</div>
+            <div style={{color:"#ffffff88",fontSize:12,marginTop:2}}>{desc}</div>
+          </div>
+          <div style={{display:"flex",gap:7}}>
+            <Btn small variant="ghost" onClick={()=>reset(key)}>↺ Padrão</Btn>
+            <Btn small variant="ghost" onClick={()=>setPreview(preview===key?null:key)}>👁️ Preview</Btn>
+          </div>
+        </div>
+        <textarea
+          value={msgs[key]}
+          onChange={e=>setMsgs({...msgs,[key]:e.target.value})}
+          rows={4}
+          style={{...iS,resize:"vertical",lineHeight:1.6,fontSize:13}}
+        />
+        {preview===key&&<div style={{marginTop:10,background:"#25D36615",border:"1px solid #25D36640",borderRadius:9,padding:"12px 14px"}}>
+          <div style={{color:"#25D366",fontWeight:700,fontSize:12,marginBottom:6}}>📱 Preview da mensagem:</div>
+          <div style={{color:"#ffffffcc",fontSize:13,lineHeight:1.7,whiteSpace:"pre-wrap"}}>{renderPreview(msgs[key])}</div>
+        </div>}
+      </Card>
+    ))}
+
+    <Btn onClick={save} variant="pink" disabled={saving} full style={{padding:"12px 0",fontSize:15}}>{saving?<Spin/>:"💾 Salvar mensagens"}</Btn>
+
+    {/* Teste rápido */}
+    {overdueCustomers.length>0&&<Card>
+      <div style={{fontWeight:700,fontSize:14,marginBottom:10}}>🧪 Teste rápido — enviar cobrança</div>
+      <div style={{color:"#ffffff88",fontSize:12,marginBottom:10}}>Clientes com parcelas vencidas disponíveis para teste:</div>
+      {overdueCustomers.map(c=>{
+        const inst=installments.filter(i=>i.customer_id===c.id&&!i.paid&&i.due_date<TODAY())[0];
+        if(!inst||!c.phone)return null;
+        const msg=msgs.overdue.replaceAll("{nome}",c.name.split(" ")[0]).replaceAll("{loja}",storeName||"FitPro").replaceAll("{parcela}",String(inst.number||1)).replaceAll("{valor}",R(inst.amount)).replaceAll("{vencimento}",fmtD(inst.due_date));
+        return(<div key={c.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",background:"#ffffff06",borderRadius:9,marginBottom:6}}>
+          <div style={{flex:1}}><div style={{fontSize:13,fontWeight:600}}>{c.name}</div><div style={{fontSize:11,color:"#ffffff88"}}>{c.phone}</div></div>
+          <button onClick={()=>window.open(`https://wa.me/${c.phone.replace(/\D/g,"")}?text=${encodeURIComponent(msg)}`,"_blank")} style={{background:"#25D36618",border:"1px solid #25D36640",color:"#25D366",borderRadius:8,padding:"6px 12px",fontSize:12,cursor:"pointer",fontWeight:700,flexShrink:0}}>📱 Enviar teste</button>
+        </div>);
+      })}
+    </Card>}
+  </div>);
+}
+
+const TABS=[{l:"Dashboard",i:"📊"},{l:"Nova Venda",i:"🛒"},{l:"Vendas",i:"🧾"},{l:"Vencimentos",i:"📅"},{l:"Clientes",i:"👤"},{l:"Produtos",i:"👗"},{l:"Estoque",i:"📦"},{l:"Custos",i:"💸"},{l:"Relatórios",i:"📋"},{l:"WhatsApp",i:"📱"},{l:"Config",i:"⚙️"}];
 
 export default function Page(){
   const [user,    setUser]    = useState(null);
@@ -1753,13 +1926,14 @@ export default function Page(){
   const panels=[
     <Dashboard sales={sales} products={products} customers={customers} costs={costs} installments={installments} storeSettings={storeSettings}/>,
     <NewSale products={products} customers={customers} storeId={storeId} toast={toast} allSales={sales} allInstallments={installments}/>,
-    <SalesList sales={sales} customers={customers} installments={installments} storeId={storeId} toast={toast}/>,
+    <SalesList sales={sales} customers={customers} installments={installments} storeId={storeId} toast={toast} storeName={storeName} storeSettings={storeSettings}/>,
     <DueDates installments={installments} customers={customers} storeName={storeName} toast={toast}/>,
     <Customers customers={customers} sales={sales} installments={installments} storeId={storeId} storeName={storeName} toast={toast} storeSettings={storeSettings}/>,
     <Products products={products} storeId={storeId} toast={toast}/>,
     <Estoque products={products} sales={sales}/>,
     <Costs costs={costs} customers={customers} storeId={storeId} toast={toast}/>,
     <Reports sales={sales} costs={costs} customers={customers} installments={installments} storeName={storeName}/>,
+    <WhatsAppMessages storeSettings={storeSettings} storeId={storeId} toast={toast} customers={customers} installments={installments} storeName={storeName}/>,
     <Settings storeName={storeName} storeId={storeId} toast={toast} onSignOut={handleSignOut} storeSettings={storeSettings} onSettingsUpdate={s=>{setStoreSettings(s);setSName(s.name);}} products={products} sales={sales} customers={customers}/>,
   ];
 
@@ -1779,7 +1953,7 @@ export default function Page(){
       <div style={{display:"flex",overflowX:"auto",gap:1,padding:"7px 10px",borderBottom:`1px solid ${G.bord}`,background:G.bg,scrollbarWidth:"none"}}>
         {TABS.map((t,i)=>{
           // Modo caixa: oculta Custos (idx 7) e Relatórios (idx 8)
-          if(storeSettings?.modo_caixa&&(t.l==="Custos"||t.l==="Relatórios"))return null;
+          if(storeSettings?.modo_caixa&&(t.l==="Custos"||t.l==="Relatórios"||t.l==="WhatsApp"))return null;
           return(<button key={i} onClick={()=>setTab(i)} style={{flexShrink:0,display:"flex",alignItems:"center",gap:4,padding:"7px 12px",borderRadius:8,border:"none",background:tab===i?`${G.pink}28`:"#ffffff0a",color:tab===i?G.pink:"#ffffffcc",fontWeight:tab===i?700:500,fontSize:12,cursor:"pointer",borderBottom:tab===i?`2px solid ${G.pink}`:"2px solid transparent",whiteSpace:"nowrap"}}>
             <span>{t.i}</span><span>{t.l}</span>
           </button>);

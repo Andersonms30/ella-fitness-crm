@@ -489,16 +489,19 @@ function Dashboard({sales,products,customers,costs,installments,storeSettings}){
 
 // ── Products ──────────────────────────────────────────────────
 function Products({products,storeId,toast,onRefresh}){
-  const [open,setOpen]=useState(false);const [edit,setEdit]=useState(null);const [q,setQ]=useState("");
+  const [open,setOpen]=useState(false);const [edit,setEdit]=useState(null);
+  const [q,setQ]=useState("");const [catFil,setCatFil]=useState("");
+  const [newCatMode,setNewCatMode]=useState(false);
   const empty={name:"",category:"",cost_price:"",sale_price:"",stock:"",description:"",photo_url:""};
   const [f,setF]=useState(empty);const [saving,setSaving]=useState(false);
 
-  const openNew=()=>{setF(empty);setEdit(null);setOpen(true);};
-  const openEdit=p=>{setF({name:p.name,category:p.category||"",cost_price:p.cost_price,sale_price:p.sale_price,stock:p.stock,description:p.description||"",photo_url:p.photo_url||""});setEdit(p);setOpen(true);};
+  const openNew=()=>{setF(empty);setEdit(null);setNewCatMode(false);setOpen(true);};
+  const openEdit=p=>{setF({name:p.name,category:p.category||"",cost_price:p.cost_price,sale_price:p.sale_price,stock:p.stock,description:p.description||"",photo_url:p.photo_url||""});setEdit(p);setNewCatMode(false);setOpen(true);};
   const save=async()=>{
     if(!f.name||!f.sale_price){toast("Nome e preço são obrigatórios","#f87171");return;}
+    if(!f.category){toast("Categoria é obrigatória","#f87171");return;}
     setSaving(true);
-    const d={name:f.name,category:f.category||"Geral",cost_price:+f.cost_price||0,sale_price:+f.sale_price,stock:+f.stock||0,description:f.description||"",photo_url:f.photo_url||"",store_id:storeId,active:true};
+    const d={name:f.name,category:f.category.trim(),cost_price:+f.cost_price||0,sale_price:+f.sale_price,stock:+f.stock||0,description:f.description||"",photo_url:f.photo_url||"",store_id:storeId,active:true};
     const {error}=edit?await sb.from("products").update(d).eq("id",edit.id):await sb.from("products").insert(d);
     if(error){toast("Erro: "+error.message,"#f87171");}else{toast(edit?"Produto atualizado!":"Produto cadastrado!");setOpen(false);}
     setSaving(false);
@@ -506,14 +509,21 @@ function Products({products,storeId,toast,onRefresh}){
   const del=async id=>{await sb.from("products").update({active:false}).eq("id",id);toast("Removido","#f87171");};
 
   const margin = f.sale_price&&f.cost_price ? (((+f.sale_price-+f.cost_price)/+f.sale_price)*100).toFixed(1) : null;
-  const list=products.filter(p=>p.active&&(p.name.toLowerCase().includes(q.toLowerCase())||p.category?.toLowerCase().includes(q.toLowerCase())));
-  const cats=[...new Set(products.filter(p=>p.active).map(p=>p.category))];
+  // Categorias exatas (sem misturar "Conjunto de calça" com "Conjunto de calça Ella")
+  const cats=[...new Set(products.filter(p=>p.active!==false).map(p=>p.category).filter(Boolean))].sort();
+  const list=products.filter(p=>{
+    if(p.active===false)return false;
+    if(catFil&&p.category!==catFil)return false; // match EXATO, não includes()
+    if(q&&!p.name.toLowerCase().includes(q.toLowerCase())&&!p.description?.toLowerCase().includes(q.toLowerCase()))return false;
+    return true;
+  });
 
   return(
     <div style={{display:"flex",flexDirection:"column",gap:12}}>
-      <div style={{display:"flex",gap:9}}><Inp placeholder="🔍 Buscar..." value={q} onChange={e=>setQ(e.target.value)} style={{flex:1}}/><Btn onClick={openNew} variant="pink">+ Produto</Btn></div>
+      <div style={{display:"flex",gap:9}}><Inp placeholder="🔍 Buscar por nome ou descrição..." value={q} onChange={e=>setQ(e.target.value)} style={{flex:1}}/><Btn onClick={openNew} variant="pink">+ Produto</Btn></div>
       <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-        {["Todos",...cats].map(c=><button key={c} onClick={()=>setQ(c==="Todos"?"":c)} style={{padding:"4px 11px",borderRadius:20,border:"none",background:(c==="Todos"&&!q)||q===c?G.pink:"#ffffff0e",color:(c==="Todos"&&!q)||q===c?"#fff":G.muted,fontSize:12,cursor:"pointer",fontWeight:(c==="Todos"&&!q)||q===c?700:400}}>{c}</button>)}
+        <button onClick={()=>setCatFil("")} style={{padding:"4px 11px",borderRadius:20,border:"none",background:!catFil?G.pink:"#ffffff10",color:!catFil?"#fff":"#ffffffcc",fontSize:12,cursor:"pointer",fontWeight:!catFil?700:400}}>Todos</button>
+        {cats.map(c=><button key={c} onClick={()=>setCatFil(catFil===c?"":c)} style={{padding:"4px 11px",borderRadius:20,border:"none",background:catFil===c?G.pink:"#ffffff10",color:catFil===c?"#fff":"#ffffffcc",fontSize:12,cursor:"pointer",fontWeight:catFil===c?700:400}}>{c}</button>)}
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(155px,1fr))",gap:11}}>
         {list.map(p=>{
@@ -529,12 +539,12 @@ function Products({products,storeId,toast,onRefresh}){
                   <Badge color={G.pink}>{p.category}</Badge>
                   <span style={{color:G.pink,fontWeight:800,fontSize:14}}>{R(p.sale_price)}</span>
                 </div>
-                <div style={{display:"flex",justifyContent:"space-between",marginTop:5,fontSize:11,color:G.muted}}>
+                <div style={{display:"flex",justifyContent:"space-between",marginTop:5,fontSize:11,color:"#ffffff88"}}>
                   <span>Custo: {R(p.cost_price)}</span>
                   {mg&&<span style={{color:G.green}}>Mg: {mg}%</span>}
                 </div>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:6}}>
-                  <span style={{color:p.stock<=3?G.red:G.muted,fontSize:12}}>Est: {p.stock}</span>
+                  <span style={{color:p.stock<=3?G.red:"#ffffff88",fontSize:12}}>Est: {p.stock}</span>
                   <div style={{display:"flex",gap:5}}><Btn small variant="ghost" onClick={()=>openEdit(p)}>✏️</Btn><Btn small variant="danger" onClick={()=>del(p.id)}>✕</Btn></div>
                 </div>
               </div>
@@ -547,7 +557,21 @@ function Products({products,storeId,toast,onRefresh}){
           <PhotoUpload value={f.photo_url} onChange={v=>setF({...f,photo_url:v})}/>
           <Inp label="Nome *" value={f.name} onChange={e=>setF({...f,name:e.target.value})} placeholder="Ex: Legging Power Preta P"/>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-            <Inp label="Categoria" value={f.category} onChange={e=>setF({...f,category:e.target.value})} placeholder="Legging, Top..."/>
+            <div style={{display:"flex",flexDirection:"column",gap:4}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span style={{color:"#ffffffaa",fontSize:11,textTransform:"uppercase",letterSpacing:.8}}>Categoria *</span>
+                <button onClick={()=>{setNewCatMode(!newCatMode);setF({...f,category:""});}} style={{background:"none",border:"none",color:G.violet,fontSize:11,cursor:"pointer",fontWeight:700}}>
+                  {newCatMode?"↩ Selecionar existente":"+ Nova categoria"}
+                </button>
+              </div>
+              {newCatMode||cats.length===0?
+                <input value={f.category} onChange={e=>setF({...f,category:e.target.value})} placeholder="Digite a nova categoria" style={iS}/>
+                :<select value={f.category} onChange={e=>setF({...f,category:e.target.value})} style={iS}>
+                  <option value="">Selecione...</option>
+                  {cats.map(c=><option key={c} value={c}>{c}</option>)}
+                </select>
+              }
+            </div>
             <Inp label="Estoque" value={f.stock} onChange={e=>setF({...f,stock:e.target.value})} type="number" min="0"/>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>

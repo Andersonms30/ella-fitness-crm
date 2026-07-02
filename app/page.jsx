@@ -105,13 +105,53 @@ function Modal({title,onClose,children,wide}){
 }
 function PhotoUpload({value,onChange}){
   const ref=useRef();
-  const handle=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>onChange(ev.target.result);r.readAsDataURL(f);};
+  const [uploading,setUploading]=useState(false);
+
+  const compressImage=(file,maxKB=300)=>new Promise(resolve=>{
+    const img=new Image();
+    const url=URL.createObjectURL(file);
+    img.onload=()=>{
+      URL.revokeObjectURL(url);
+      const canvas=document.createElement("canvas");
+      let {width:w,height:h}=img;
+      const MAX_DIM=1200;
+      if(w>MAX_DIM||h>MAX_DIM){const r=Math.min(MAX_DIM/w,MAX_DIM/h);w=Math.round(w*r);h=Math.round(h*r);}
+      canvas.width=w;canvas.height=h;
+      canvas.getContext("2d").drawImage(img,0,0,w,h);
+      let quality=0.85;
+      const tryCompress=()=>{
+        canvas.toBlob(blob=>{
+          if(!blob)return resolve(file);
+          if(blob.size<=maxKB*1024||quality<0.3)resolve(blob);
+          else{quality-=0.1;tryCompress();}
+        },"image/jpeg",quality);
+      };
+      tryCompress();
+    };
+    img.onerror=()=>resolve(file);
+    img.src=url;
+  });
+
+  const handle=async e=>{
+    const f=e.target.files[0];if(!f)return;
+    setUploading(true);
+    try{
+      const compressed=await compressImage(f,300);
+      const r=new FileReader();
+      r.onload=ev=>onChange(ev.target.result);
+      r.readAsDataURL(compressed);
+    }catch(err){onChange("");}
+    setUploading(false);
+  };
+
   return(
     <div>
       <span style={{color:G.muted,fontSize:11,textTransform:"uppercase",letterSpacing:.8,display:"block",marginBottom:5}}>Foto</span>
-      <div onClick={()=>ref.current.click()} style={{width:"100%",height:110,borderRadius:10,border:`2px dashed ${G.bord2}`,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",cursor:"pointer",overflow:"hidden",background:G.bg,position:"relative"}}>
-        {value?<img src={value} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:<><span style={{fontSize:24,marginBottom:4}}>📷</span><span style={{color:G.muted,fontSize:12}}>Adicionar foto</span></>}
-        {value&&<div style={{position:"absolute",bottom:0,left:0,right:0,background:"#000a",textAlign:"center",fontSize:11,color:"#fff",padding:"3px 0"}}>Trocar</div>}
+      <div onClick={()=>!uploading&&ref.current.click()} style={{width:"100%",height:110,borderRadius:10,border:`2px dashed ${G.bord2}`,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",cursor:uploading?"wait":"pointer",overflow:"hidden",background:G.bg,position:"relative"}}>
+        {uploading?<><div style={{width:22,height:22,border:`3px solid ${G.muted}`,borderTopColor:G.pink,borderRadius:"50%",animation:"spin .7s linear infinite",marginBottom:6}}/><span style={{color:G.muted,fontSize:11}}>Comprimindo...</span></>
+        :value?<img src={value} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+        :<><span style={{fontSize:24,marginBottom:4}}>📷</span><span style={{color:G.muted,fontSize:12}}>Adicionar foto</span><span style={{color:G.muted,fontSize:10,marginTop:2}}>Auto-comprimido ≤300KB</span></>}
+        {value&&!uploading&&<div style={{position:"absolute",bottom:0,left:0,right:0,background:"#000a",textAlign:"center",fontSize:11,color:"#fff",padding:"3px 0"}}>Trocar</div>}
       </div>
       <input ref={ref} type="file" accept="image/*" onChange={handle} style={{display:"none"}}/>
     </div>

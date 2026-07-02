@@ -1040,7 +1040,7 @@ function SalesList({sales,customers,installments,storeId,toast,storeName,storeSe
     {/* Modal cancelar */}
     {cancelId&&<Modal title="Cancelar venda?" onClose={()=>setCancelId(null)}>
       <div style={{display:"flex",flexDirection:"column",gap:14}}>
-        <p style={{color:"#ffffffaa",fontSize:14,margin:0}}>Esta acao nao pode ser desfeita. O estoque nao sera devolvido automaticamente.</p>
+        <p style={{color:"#ffffffaa",fontSize:14,margin:0}}>Os produtos voltarão automaticamente para o estoque. Esta ação não pode ser desfeita.</p>
         <div style={{display:"flex",gap:9}}>
           <Btn full variant="danger" onClick={()=>cancelSale(cancelId)}>Confirmar cancelamento</Btn>
           <Btn full variant="ghost" onClick={()=>setCancelId(null)}>Voltar</Btn>

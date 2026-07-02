@@ -670,152 +670,231 @@ function Costs({costs,customers,storeId,toast}){
 
 // ── New Sale ──────────────────────────────────────────────────
 function NewSale({products,customers,storeId,toast,allSales,allInstallments}){
-  const [cId,setCId]=useState("");const [date,setDate]=useState(TODAY());
-  const [items,setItems]=useState([]);const [method,setMethod]=useState("pix");
-  const [parc,setParc]=useState(1);const [diaVenc,setDiaVenc]=useState("10");
-  const [notes,setNotes]=useState("");const [inclPend,setInclPend]=useState(false);
+  const [cId,setCId]=useState("");
+  const [date,setDate]=useState(TODAY());
+  const [items,setItems]=useState([]);
+  const [notes,setNotes]=useState("");
+  const [inclPend,setInclPend]=useState(false);
   const [saving,setSaving]=useState(false);
-
   const [prodCat,setProdCat]=useState("");
   const [prodQ,setProdQ]=useState("");
+
+  // Desconto
+  const [discType,setDiscType]=useState("pct"); // "pct" | "val"
+  const [discInput,setDiscInput]=useState("");
+
+  // Pagamento misto: array de {method, valor, parc, diaVenc}
+  const PAYMENT_OPTS=[
+    {key:"dinheiro",label:"Dinheiro 💵",color:"#22c55e"},
+    {key:"pix",label:"PIX 💚",color:G.green},
+    {key:"debit",label:"Débito 🟡",color:G.amber},
+    {key:"credit",label:"Crédito 💜",color:G.violet},
+    {key:"crediario",label:"Crediário 🩷",color:G.rose},
+  ];
+  const [payments,setPayments]=useState([{method:"pix",valor:"",parc:1,diaVenc:"10"}]);
+
+  const addPayment=()=>setPayments([...payments,{method:"pix",valor:"",parc:1,diaVenc:"10"}]);
+  const rmPayment=i=>setPayments(payments.filter((_,idx)=>idx!==i));
+  const updPayment=(i,field,val)=>setPayments(payments.map((p,idx)=>idx===i?{...p,[field]:val}:p));
+
   const selC=customers.find(c=>c.id===cId);
   const pendInst=cId?allInstallments.filter(i=>i.customer_id===cId&&!i.paid):[];
   const pendTotal=pendInst.reduce((a,i)=>a+Number(i.amount),0);
 
-  const addItem=pid=>{const p=products.find(x=>x.id===pid);if(!p)return;if(items.find(x=>x.pid===pid))setItems(items.map(x=>x.pid===pid?{...x,qty:x.qty+1}:x));else setItems([...items,{pid:pid,qty:1,sale_price:p.sale_price,cost_price:p.cost_price,name:p.name,category:p.category}]);};
+  const addItem=pid=>{const p=products.find(x=>x.id===pid);if(!p)return;if(items.find(x=>x.pid===pid))setItems(items.map(x=>x.pid===pid?{...x,qty:x.qty+1}:x));else setItems([...items,{pid,qty:1,sale_price:p.sale_price,cost_price:p.cost_price,name:p.name,category:p.category}]);};
   const rmItem=pid=>setItems(items.filter(x=>x.pid!==pid));
   const chgQty=(pid,q)=>q<1?rmItem(pid):setItems(items.map(x=>x.pid===pid?{...x,qty:q}:x));
 
-  const sub=items.reduce((a,x)=>a+x.qty*x.sale_price,0);
+  const subTotal=items.reduce((a,x)=>a+x.qty*x.sale_price,0);
   const cmv=items.reduce((a,x)=>a+x.qty*x.cost_price,0);
-  const canParc=method==="credit"||method==="crediario";
-  const effParc=canParc?parc:1;
-  const total=inclPend?+(sub+pendTotal).toFixed(2):sub;
-  const instVal=+(total/effParc).toFixed(2);
+
+  // Desconto calculado
+  const discVal=discInput
+    ? discType==="pct" ? Math.min(subTotal, subTotal*(+discInput/100)) : Math.min(subTotal,+discInput)
+    : 0;
+  const subAfterDisc=Math.max(0,subTotal-discVal);
+  const totalBase=inclPend?+(subAfterDisc+pendTotal).toFixed(2):+subAfterDisc.toFixed(2);
+
+  // Soma dos pagamentos inseridos
+  const paySum=payments.reduce((a,p)=>a+(+p.valor||0),0);
+  const payRemainder=Math.max(0,+(totalBase-paySum).toFixed(2));
 
   const submit=async()=>{
     if(!items.length){toast("Adicione pelo menos um produto","#f87171");return;}
+    const filledPay=payments.filter(p=>+p.valor>0);
+    if(!filledPay.length){toast("Informe ao menos uma forma de pagamento","#f87171");return;}
+    const payTotal=filledPay.reduce((a,p)=>a+(+p.valor),0);
+    if(Math.abs(payTotal-totalBase)>0.05){toast(`Pagamentos somam ${R(payTotal)} mas o total é ${R(totalBase)}. Ajuste os valores.`,"#f87171");return;}
+
     setSaving(true);
     try{
-      // 1. Create sale
+      // Método principal = maior valor
+      const mainPay=filledPay.reduce((a,b)=>(+b.valor)>(+a.valor)?b:a);
+
       const{data:sale,error:sErr}=await sb.from("sales").insert({
         store_id:storeId,customer_id:cId||null,date,
-        subtotal:sub,total_cost:cmv,total,method,installments:effParc,notes
+        subtotal:subTotal,discount:discVal,total_cost:cmv,
+        total:totalBase,method:mainPay.method,
+        installments:1,notes,
+        payment_split:JSON.stringify(filledPay),
       }).select().single();
       if(sErr)throw sErr;
 
-      // 2. Insert items
       await sb.from("sale_items").insert(items.map(it=>({
         sale_id:sale.id,product_id:it.pid,product_name:it.name,
         category:it.category,quantity:it.qty,unit_price:it.sale_price,cost_price:it.cost_price
       })));
 
-      // 3. Update stock
       for(const it of items){
         const p=products.find(x=>x.id===it.pid);
         if(p&&p.stock!==999)await sb.from("products").update({stock:Math.max(0,p.stock-it.qty)}).eq("id",it.pid);
       }
 
-      // 4. Cancel pending installments if inclPend
       if(inclPend&&cId&&pendInst.length){
         await sb.from("installments").update({paid:true,paid_at:new Date().toISOString()}).in("id",pendInst.map(i=>i.id));
       }
 
-      // 5. Create installments
-      const insts=Array.from({length:effParc},(_,i)=>({
-        sale_id:sale.id,store_id:storeId,customer_id:cId||null,
-        number:i+1,amount:instVal,
-        due_date:method==="crediario"?dueDateDay(date,i+1,diaVenc):addMonths(date,i+1),
-        paid:effParc===1&&(method==="pix"||method==="debit")
-      }));
-      await sb.from("installments").insert(insts);
+      // Gerar parcelas para cada forma de pagamento
+      const allInsts=[];
+      for(const pay of filledPay){
+        const isParc=pay.method==="credit"||pay.method==="crediario";
+        const nParc=isParc?pay.parc:1;
+        const instVal=+(+pay.valor/nParc).toFixed(2);
+        const isPaidNow=pay.method==="dinheiro"||pay.method==="pix"||pay.method==="debit";
+        for(let i=0;i<nParc;i++){
+          allInsts.push({
+            sale_id:sale.id,store_id:storeId,customer_id:cId||null,
+            number:i+1,amount:instVal,method:pay.method,
+            due_date:pay.method==="crediario"?dueDateDay(date,i+1,pay.diaVenc):addMonths(date,i),
+            paid:isPaidNow,
+            paid_at:isPaidNow?new Date().toISOString():null,
+          });
+        }
+      }
+      await sb.from("installments").insert(allInsts);
 
       toast("✅ Venda registrada!");
-      setItems([]);setCId("");setMethod("pix");setParc(1);setInclPend(false);setNotes("");setDate(TODAY());
+      setItems([]);setCId("");setNotes("");setDate(TODAY());setInclPend(false);
+      setDiscInput("");setPayments([{method:"pix",valor:"",parc:1,diaVenc:"10"}]);
     }catch(e){toast("Erro: "+e.message,"#f87171");}
     setSaving(false);
   };
 
-  return(
-    <div style={{display:"flex",flexDirection:"column",gap:12}}>
-      <Card>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:11}}>
-          <Sel label="Cliente" value={cId} onChange={e=>{setCId(e.target.value);setInclPend(false);}}>
-            <option value="">Avulso (sem cadastro)</option>
-            {customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
-          </Sel>
-          <Inp label="Data da venda" type="date" value={date} onChange={e=>setDate(e.target.value)} hint="Aceita datas retroativas"/>
-        </div>
-        {selC&&pendTotal>0&&(
-          <div style={{marginTop:10,background:`${G.amber}12`,border:`1px solid ${G.amber}30`,borderRadius:9,padding:"10px 13px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
-            <div><div style={{color:G.amber,fontWeight:700,fontSize:13}}>⚠️ Saldo em aberto</div><div style={{color:G.muted,fontSize:12}}>{R(pendTotal)} pendentes ({pendInst.length} parcelas)</div></div>
-            <button onClick={()=>setInclPend(!inclPend)} style={{padding:"6px 12px",borderRadius:8,border:"none",fontWeight:700,fontSize:12,cursor:"pointer",background:inclPend?G.amber:"#ffffff10",color:inclPend?"#000":"#fff"}}>{inclPend?"✓ Incluído":"Incluir no parcelamento"}</button>
-          </div>
-        )}
-      </Card>
+  return(<div style={{display:"flex",flexDirection:"column",gap:12}}>
+    {/* Cliente + Data */}
+    <Card>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:11}}>
+        <Sel label="Cliente" value={cId} onChange={e=>{setCId(e.target.value);setInclPend(false);}}>
+          <option value="">Avulso</option>
+          {customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+        </Sel>
+        <Inp label="Data" type="date" value={date} onChange={e=>setDate(e.target.value)} hint="Aceita datas retroativas"/>
+      </div>
+      {selC&&pendTotal>0&&<div style={{marginTop:10,background:`${G.amber}12`,border:`1px solid ${G.amber}30`,borderRadius:9,padding:"10px 13px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
+        <div><div style={{color:G.amber,fontWeight:700,fontSize:13}}>⚠️ Saldo em aberto</div><div style={{color:"#ffffff88",fontSize:12}}>{R(pendTotal)} ({pendInst.length} parcelas)</div></div>
+        <button onClick={()=>setInclPend(!inclPend)} style={{padding:"6px 12px",borderRadius:8,border:"none",fontWeight:700,fontSize:12,cursor:"pointer",background:inclPend?G.amber:"#ffffff10",color:inclPend?"#000":"#fff"}}>{inclPend?"✓ Incluído":"Incluir no total"}</button>
+      </div>}
+    </Card>
 
-      <Card>
-        {(()=>{
-          const cats=[...new Set(products.filter(p=>p.active&&p.stock>0).map(p=>p.category).filter(Boolean))].sort();
-          const filteredProds=products.filter(p=>p.active&&p.stock>0&&(!prodCat||p.category===prodCat)&&(!prodQ||p.name.toLowerCase().includes(prodQ.toLowerCase())));
-          return(<>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:9,marginBottom:9}}>
-              <Sel label="Categoria" value={prodCat} onChange={e=>setProdCat(e.target.value)}>
-                <option value="">Todas as categorias</option>
-                {cats.map(c=><option key={c} value={c}>{c}</option>)}
-              </Sel>
-              <Inp label="Buscar produto" value={prodQ} onChange={e=>setProdQ(e.target.value)} placeholder="Nome..."/>
-            </div>
-            <Sel label="Adicionar produto" value="" onChange={e=>{if(e.target.value){addItem(e.target.value);e.target.value=""}}}>
-              <option value="">Selecione um produto...</option>
-              {filteredProds.map(p=><option key={p.id} value={p.id}>{p.name} — {R(p.sale_price)}{p.stock<=3?` ⚠️(${p.stock})`:""}</option>)}
+    {/* Produtos */}
+    <Card>
+      {(()=>{
+        const cats=[...new Set(products.filter(p=>p.active&&p.stock>0).map(p=>p.category).filter(Boolean))].sort();
+        const filteredProds=products.filter(p=>p.active&&p.stock>0&&(!prodCat||p.category===prodCat)&&(!prodQ||p.name.toLowerCase().includes(prodQ.toLowerCase())));
+        return(<>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:9,marginBottom:9}}>
+            <Sel label="Categoria" value={prodCat} onChange={e=>setProdCat(e.target.value)}>
+              <option value="">Todas</option>
+              {cats.map(c=><option key={c} value={c}>{c}</option>)}
             </Sel>
-          </>);
-        })()}
-        {items.length>0&&<div style={{marginTop:11,display:"flex",flexDirection:"column",gap:7}}>{items.map(it=>(
-          <div key={it.pid} style={{display:"flex",alignItems:"center",gap:8,background:"#ffffff07",borderRadius:9,padding:"7px 10px"}}>
-            <span style={{flex:1,fontSize:13,fontWeight:600}}>{it.name}</span>
-            <span style={{color:G.muted,fontSize:11}}>CMV: {R(it.cost_price)}</span>
-            <button onClick={()=>chgQty(it.pid,it.qty-1)} style={QB}>−</button>
-            <span style={{fontWeight:700,minWidth:20,textAlign:"center",fontSize:13}}>{it.qty}</span>
-            <button onClick={()=>chgQty(it.pid,it.qty+1)} style={QB}>+</button>
-            <span style={{color:G.pink,fontWeight:700,minWidth:60,textAlign:"right",fontSize:13}}>{R(it.qty*it.sale_price)}</span>
-            <button onClick={()=>rmItem(it.pid)} style={{background:"none",border:"none",color:G.red,cursor:"pointer",fontSize:15}}>✕</button>
+            <Inp label="Buscar produto" value={prodQ} onChange={e=>setProdQ(e.target.value)} placeholder="Nome..."/>
           </div>
-        ))}</div>}
-      </Card>
+          <Sel label="Adicionar produto" value="" onChange={e=>{if(e.target.value){addItem(e.target.value);e.target.value=""}}}>
+            <option value="">Selecione...</option>
+            {filteredProds.map(p=><option key={p.id} value={p.id}>{p.name} — {R(p.sale_price)}{p.stock<=3?` ⚠️(${p.stock})`:""}</option>)}
+          </Sel>
+        </>);
+      })()}
+      {items.length>0&&<div style={{marginTop:11,display:"flex",flexDirection:"column",gap:7}}>{items.map(it=>(
+        <div key={it.pid} style={{display:"flex",alignItems:"center",gap:8,background:"#ffffff07",borderRadius:9,padding:"7px 10px"}}>
+          <span style={{flex:1,fontSize:13,fontWeight:600}}>{it.name}</span>
+          <button onClick={()=>chgQty(it.pid,it.qty-1)} style={QB}>−</button>
+          <span style={{fontWeight:700,minWidth:20,textAlign:"center",fontSize:13}}>{it.qty}</span>
+          <button onClick={()=>chgQty(it.pid,it.qty+1)} style={QB}>+</button>
+          <span style={{color:G.pink,fontWeight:700,minWidth:60,textAlign:"right",fontSize:13}}>{R(it.qty*it.sale_price)}</span>
+          <button onClick={()=>rmItem(it.pid)} style={{background:"none",border:"none",color:G.red,cursor:"pointer",fontSize:15}}>✕</button>
+        </div>
+      ))}</div>}
+    </Card>
 
-      <Card>
-        <div style={{fontWeight:700,marginBottom:10,fontSize:13}}>💳 Pagamento</div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:12}}>
-          {[["pix","PIX 💚",G.green],["debit","Débito 🟡",G.amber],["credit","Crédito 💜",G.violet],["crediario","Crediário 🩷",G.rose]].map(([m,l,col])=>(
-            <button key={m} onClick={()=>{setMethod(m);if(m!=="credit"&&m!=="crediario")setParc(1);}} style={{padding:"9px 0",borderRadius:9,border:`1.5px solid ${method===m?col:G.bord}`,background:method===m?col+"22":"transparent",color:method===m?col:G.muted,fontWeight:method===m?700:400,fontSize:13,cursor:"pointer"}}>{l}</button>
+    {/* Desconto */}
+    <Card>
+      <div style={{fontWeight:700,marginBottom:10,fontSize:13}}>🎁 Desconto <span style={{color:"#ffffff66",fontWeight:400,fontSize:11}}>(opcional)</span></div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr auto 1fr",gap:9,alignItems:"end"}}>
+        <Inp label="Valor do desconto" type="number" min="0" value={discInput} onChange={e=>setDiscInput(e.target.value)} placeholder={discType==="pct"?"Ex: 10":"Ex: 25,00"}/>
+        <div style={{display:"flex",gap:0,background:G.bg,borderRadius:8,border:`1px solid ${G.bord2}`,overflow:"hidden",height:38,alignSelf:"flex-end"}}>
+          {[["pct","%"],["val","R$"]].map(([k,l])=>(
+            <button key={k} onClick={()=>{setDiscType(k);setDiscInput("");}} style={{flex:1,padding:"0 14px",border:"none",background:discType===k?G.violet:"transparent",color:discType===k?"#fff":"#ffffffaa",fontWeight:discType===k?700:400,fontSize:14,cursor:"pointer"}}>{l}</button>
           ))}
         </div>
-        {canParc&&<>
-          <span style={{color:G.muted,fontSize:11,textTransform:"uppercase",letterSpacing:.8,display:"block",marginBottom:7}}>Parcelas</span>
-          <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:method==="crediario"?11:0}}>
-            {[1,2,3,4,5,6,8,10,12].map(n=><button key={n} onClick={()=>setParc(n)} style={{padding:"6px 11px",borderRadius:8,border:"none",fontWeight:parc===n?700:400,fontSize:13,cursor:"pointer",background:parc===n?(method==="crediario"?G.rose:G.violet):"#ffffff0e",color:parc===n?"#fff":G.muted}}>{n}x</button>)}
-          </div>
-          {method==="crediario"&&parc>1&&<Sel label="Dia do vencimento" value={diaVenc} onChange={e=>setDiaVenc(e.target.value)} style={{marginTop:8}}>
-            {["5","10","15","20","25","30"].map(d=><option key={d} value={d}>Todo dia {d}</option>)}
-          </Sel>}
-        </>}
-      </Card>
+        <div style={{background:"#ffffff06",borderRadius:9,padding:"9px 12px",textAlign:"center"}}>
+          <div style={{color:"#ffffff66",fontSize:10,textTransform:"uppercase"}}>Desconto</div>
+          <div style={{color:discVal>0?G.green:"#ffffff44",fontWeight:700,fontSize:15,marginTop:2}}>{discVal>0?`- ${R(discVal)}`:"—"}</div>
+        </div>
+      </div>
+    </Card>
 
-      <Inp label="Observações (opcional)" value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Notas sobre a venda..."/>
+    {/* Pagamento misto */}
+    <Card>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+        <div style={{fontWeight:700,fontSize:13}}>💳 Formas de pagamento</div>
+        <Btn small variant="ghost" onClick={addPayment}>+ Adicionar</Btn>
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:10}}>
+        {payments.map((pay,i)=>{
+          const isParc=pay.method==="credit"||pay.method==="crediario";
+          const col=PAYMENT_OPTS.find(o=>o.key===pay.method)?.color||G.muted;
+          return(<div key={i} style={{background:"#ffffff06",borderRadius:10,padding:"11px 12px",border:`1px solid ${col}30`}}>
+            <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:isParc?10:0,flexWrap:"wrap"}}>
+              <select value={pay.method} onChange={e=>updPayment(i,"method",e.target.value)} style={{...iS,flex:1,minWidth:120,fontSize:13,color:col,fontWeight:600}}>
+                {PAYMENT_OPTS.map(o=><option key={o.key} value={o.key}>{o.label}</option>)}
+              </select>
+              <input type="number" min="0" step="0.01" placeholder="Valor R$" value={pay.valor}
+                onChange={e=>updPayment(i,"valor",e.target.value)}
+                style={{...iS,width:110,fontSize:13}}/>
+              {payments.length>1&&<button onClick={()=>rmPayment(i)} style={{background:"none",border:"none",color:G.red,cursor:"pointer",fontSize:18,flexShrink:0}}>✕</button>}
+            </div>
+            {isParc&&<div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+              <div style={{display:"flex",gap:5,flexWrap:"wrap",flex:1}}>
+                {[1,2,3,4,5,6,8,10,12].map(n=><button key={n} onClick={()=>updPayment(i,"parc",n)} style={{padding:"4px 9px",borderRadius:7,border:"none",background:pay.parc===n?col:"#ffffff10",color:pay.parc===n?"#fff":"#ffffffaa",fontWeight:pay.parc===n?700:400,fontSize:12,cursor:"pointer"}}>{n}x</button>)}
+              </div>
+              {pay.method==="crediario"&&pay.parc>1&&<select value={pay.diaVenc} onChange={e=>updPayment(i,"diaVenc",e.target.value)} style={{...iS,width:110,fontSize:12}}>
+                {["5","10","15","20","25","30"].map(d=><option key={d} value={d}>Dia {d}</option>)}
+              </select>}
+            </div>}
+          </div>);
+        })}
+      </div>
+      {/* Resumo pagamentos */}
+      {payments.some(p=>+p.valor>0)&&<div style={{marginTop:10,padding:"8px 12px",background:"#ffffff06",borderRadius:9}}>
+        <div style={{display:"flex",justifyContent:"space-between",fontSize:12,color:"#ffffff88",marginBottom:4}}><span>Soma dos pagamentos</span><span style={{color:G.green}}>{R(paySum)}</span></div>
+        {payRemainder>0.01&&<div style={{display:"flex",justifyContent:"space-between",fontSize:12,color:G.amber}}><span>⚠️ Faltam</span><span style={{fontWeight:700}}>{R(payRemainder)}</span></div>}
+        {payRemainder<=0.01&&paySum>0&&<div style={{color:G.green,fontSize:12,fontWeight:700}}>✓ Pagamentos conferem</div>}
+      </div>}
+    </Card>
 
-      <Card style={{background:G.bg}}>
-        <div style={{display:"flex",justifyContent:"space-between",color:G.muted,fontSize:13,marginBottom:5}}><span>Subtotal</span><span style={{color:G.text}}>{R(sub)}</span></div>
-        <div style={{display:"flex",justifyContent:"space-between",color:G.muted,fontSize:13,marginBottom:5}}><span>CMV (custo)</span><span style={{color:G.amber}}>{R(cmv)}</span></div>
-        {inclPend&&pendTotal>0&&<div style={{display:"flex",justifyContent:"space-between",color:G.muted,fontSize:13,marginBottom:5}}><span>Saldo anterior</span><span style={{color:G.rose}}>{R(pendTotal)}</span></div>}
-        <Divider my={8}/>
-        <div style={{display:"flex",justifyContent:"space-between",fontWeight:900,fontSize:20,marginBottom:canParc&&parc>1?8:0}}><span>Total</span><span style={{color:G.pink}}>{R(total)}</span></div>
-        {canParc&&parc>1&&<div style={{textAlign:"center",background:`${method==="crediario"?G.rose:G.violet}14`,border:`1px solid ${method==="crediario"?G.rose:G.violet}30`,borderRadius:9,padding:"8px 12px",marginBottom:6}}><span style={{color:method==="crediario"?G.rose:G.violet,fontWeight:800,fontSize:16}}>{parc}x de {R(instVal)}</span></div>}
-        <Btn full onClick={submit} disabled={saving||!items.length} variant="pink" style={{marginTop:10,padding:"12px 0",fontSize:15}}>{saving?<Spin/>:"Registrar Venda"}</Btn>
-      </Card>
-    </div>
-  );
+    <Inp label="Observações (opcional)" value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Notas sobre a venda..."/>
+
+    {/* Resumo total */}
+    <Card style={{background:G.bg}}>
+      <div style={{display:"flex",justifyContent:"space-between",color:"#ffffff88",fontSize:13,marginBottom:5}}><span>Subtotal</span><span style={{color:G.text}}>{R(subTotal)}</span></div>
+      {discVal>0&&<div style={{display:"flex",justifyContent:"space-between",color:"#ffffff88",fontSize:13,marginBottom:5}}><span>Desconto</span><span style={{color:G.green}}>- {R(discVal)}</span></div>}
+      {inclPend&&pendTotal>0&&<div style={{display:"flex",justifyContent:"space-between",color:"#ffffff88",fontSize:13,marginBottom:5}}><span>Saldo anterior</span><span style={{color:G.rose}}>{R(pendTotal)}</span></div>}
+      <Divider my={8}/>
+      <div style={{display:"flex",justifyContent:"space-between",fontWeight:900,fontSize:22,marginBottom:12}}><span>Total</span><span style={{color:G.pink}}>{R(totalBase)}</span></div>
+      <Btn full onClick={submit} disabled={saving||!items.length} variant="pink" style={{padding:"13px 0",fontSize:15}}>{saving?<Spin/>:"✅ Registrar Venda"}</Btn>
+    </Card>
+  </div>);
 }
 const QB={width:26,height:26,borderRadius:6,border:`1px solid ${G.bord2}`,background:"#ffffff0e",color:"#fff",cursor:"pointer",fontSize:14,fontWeight:700,lineHeight:1,flexShrink:0};
 

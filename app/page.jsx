@@ -1016,13 +1016,17 @@ function SalesList({sales,customers,installments,storeId,toast,storeName,storeSe
 
   const saveEdit=async()=>{
     if(!editF.items.length){toast("Adicione pelo menos um produto","#f87171");return;}
+    const subTotal=editF.items.reduce((a,x)=>a+x.qty*Number(x.sale_price),0);
+    const disc=Number(editF.discount)||0;
+    const total=Math.max(0,subTotal-disc);
+    const pays=editF.editPayments||[{method:editF.method||"pix",valor:String(total)}];
+    const paySum=pays.reduce((a,p)=>a+(+p.valor||0),0);
+    if(pays.some(p=>+p.valor>0)&&Math.abs(paySum-total)>0.05){
+      toast(`Pagamentos somam ${R(paySum)} mas o total é ${R(total)}. Ajuste os valores.`,"#f87171");return;
+    }
     setEditSaving(true);
     try{
-      const subTotal=editF.items.reduce((a,x)=>a+x.qty*Number(x.sale_price),0);
       const cmv=editF.items.reduce((a,x)=>a+x.qty*Number(x.cost_price),0);
-      const disc=Number(editF.discount)||0;
-      const total=Math.max(0,subTotal-disc);
-      const pays=editF.editPayments||[{method:editF.method||"pix",valor:String(total)}];
       const mainPay=pays.reduce((a,b)=>(+b.valor||0)>(+a.valor||0)?b:a,pays[0]);
 
       await sb.from("sales").update({
@@ -1301,6 +1305,30 @@ function SalesList({sales,customers,installments,storeId,toast,storeName,storeSe
         </div>}
 
         <Inp label="Observações" value={editF.notes} onChange={e=>setEditF({...editF,notes:e.target.value})} placeholder="Notas..."/>
+
+        {/* Resumo de validação — mesmo padrão da Nova Venda */}
+        {(()=>{
+          const editTotal=Math.max(0,editF.items.reduce((a,x)=>a+x.qty*Number(x.sale_price),0)-(editF.discount||0));
+          const editPaySum=(editF.editPayments||[]).reduce((a,p)=>a+(+p.valor||0),0);
+          const editRemainder=Math.max(0,+(editTotal-editPaySum).toFixed(2));
+          return(<div style={{background:G.bg,borderRadius:10,padding:"10px 14px",display:"flex",flexDirection:"column",gap:5}}>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:13}}>
+              <span style={{color:"#ffffff88"}}>Total da venda</span>
+              <span style={{color:G.pink,fontWeight:700}}>{R(editTotal)}</span>
+            </div>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:13}}>
+              <span style={{color:"#ffffff88"}}>Soma dos pagamentos</span>
+              <span style={{color:G.green,fontWeight:700}}>{R(editPaySum)}</span>
+            </div>
+            <div style={{height:1,background:G.bord,margin:"2px 0"}}/>
+            {editRemainder>0.01
+              ?<div style={{display:"flex",justifyContent:"space-between",fontSize:13,fontWeight:700,color:G.amber}}>
+                <span>⚠️ Faltam</span><span>{R(editRemainder)}</span>
+              </div>
+              :editPaySum>0&&<div style={{color:G.green,fontSize:13,fontWeight:700}}>✓ Pagamentos conferem</div>
+            }
+          </div>);
+        })()}
 
         <div style={{display:"flex",gap:9}}>
           <Btn full onClick={saveEdit} variant="pink" disabled={editSaving}>{editSaving?<Spin/>:"💾 Salvar alterações"}</Btn>

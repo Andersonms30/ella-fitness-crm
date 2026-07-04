@@ -939,11 +939,88 @@ function NewSale({products,customers,storeId,toast,allSales,allInstallments}){
 const QB={width:26,height:26,borderRadius:6,border:`1px solid ${G.bord2}`,background:"#ffffff0e",color:"#fff",cursor:"pointer",fontSize:14,fontWeight:700,lineHeight:1,flexShrink:0};
 
 // ── Sales List ────────────────────────────────────────────────
-function SalesList({sales,customers,installments,storeId,toast,storeName,storeSettings}){
+function SalesList({sales,customers,installments,storeId,toast,storeName,storeSettings,products}){
   const [df,setDf]=useState("");const [dt,setDt]=useState("");
   const [cFil,setCFil]=useState("");const [mFil,setMFil]=useState("");
   const [exp,setExp]=useState(null);const [showQuotes,setShowQuotes]=useState(false);
   const [cancelId,setCancelId]=useState(null);
+  const [editSale,setEditSale]=useState(null); // sale being edited
+  const [editF,setEditF]=useState({});         // edit form state
+  const [editSaving,setEditSaving]=useState(false);
+
+  const PAYMENT_OPTS=[
+    {key:"dinheiro",label:"Dinheiro 💵"},{key:"pix",label:"PIX 💚"},
+    {key:"debit",label:"Débito 🟡"},{key:"credit",label:"Crédito 💜"},
+    {key:"crediario",label:"Crediário 🩷"},
+  ];
+
+  const openEdit=(s)=>{
+    setEditF({
+      customer_id:s.customer_id||"",
+      date:s.date,
+      notes:s.notes||"",
+      method:s.method||"pix",
+      discount:s.discount||0,
+      // parse items
+      items:s.items.map(it=>({
+        pid:it.product_id,name:it.product_name,
+        qty:it.quantity,sale_price:it.unit_price,cost_price:it.cost_price,
+        category:it.category,
+      })),
+      // installments edit
+      insts:installments.filter(i=>i.sale_id===s.id).map(i=>({
+        id:i.id,number:i.number,amount:i.amount,due_date:i.due_date,paid:i.paid,method:i.method||s.method,
+      })),
+    });
+    setEditSale(s);
+  };
+
+  const saveEdit=async()=>{
+    if(!editF.items.length){toast("Adicione pelo menos um produto","#f87171");return;}
+    setEditSaving(true);
+    try{
+      const subTotal=editF.items.reduce((a,x)=>a+x.qty*Number(x.sale_price),0);
+      const cmv=editF.items.reduce((a,x)=>a+x.qty*Number(x.cost_price),0);
+      const disc=Number(editF.discount)||0;
+      const total=Math.max(0,subTotal-disc);
+
+      // Update sale header
+      await sb.from("sales").update({
+        customer_id:editF.customer_id||null,
+        date:editF.date,notes:editF.notes,
+        method:editF.method,subtotal:subTotal,
+        discount:disc,total_cost:cmv,total,
+      }).eq("id",editSale.id);
+
+      // Replace items
+      await sb.from("sale_items").delete().eq("sale_id",editSale.id);
+      await sb.from("sale_items").insert(editF.items.map(it=>({
+        sale_id:editSale.id,product_id:it.pid,product_name:it.name,
+        category:it.category,quantity:it.qty,
+        unit_price:it.sale_price,cost_price:it.cost_price,
+      })));
+
+      // Update installments amounts/dates
+      for(const inst of editF.insts){
+        await sb.from("installments").update({
+          amount:inst.amount,due_date:inst.due_date,method:inst.method,
+        }).eq("id",inst.id);
+      }
+
+      toast("Venda atualizada! ✓");setEditSale(null);
+    }catch(e){toast("Erro: "+e.message,"#f87171");}
+    setEditSaving(false);
+  };
+
+  // helpers for edit items
+  const editAddItem=pid=>{
+    const p=products.find(x=>x.id===pid);if(!p)return;
+    const exists=editF.items.find(x=>x.pid===pid);
+    if(exists)setEditF({...editF,items:editF.items.map(x=>x.pid===pid?{...x,qty:x.qty+1}:x)});
+    else setEditF({...editF,items:[...editF.items,{pid,name:p.name,qty:1,sale_price:p.sale_price,cost_price:p.cost_price,category:p.category}]});
+  };
+  const editRmItem=pid=>setEditF({...editF,items:editF.items.filter(x=>x.pid!==pid)});
+  const editChgQty=(pid,q)=>q<1?editRmItem(pid):setEditF({...editF,items:editF.items.map(x=>x.pid===pid?{...x,qty:q}:x)});
 
   const list=sales.filter(s=>{
     if(showQuotes?!s.is_quote:s.is_quote)return false;
@@ -1069,6 +1146,7 @@ function SalesList({sales,customers,installments,storeId,toast,storeName,storeSe
             {/* Ações */}
             {!s.cancelled&&<div style={{display:"flex",gap:7,flexWrap:"wrap",paddingTop:10,borderTop:`1px solid ${G.bord}`}}>
               <Btn small variant="ghost" onClick={()=>printReceipt(s)}>🖨️ Imprimir recibo</Btn>
+              <Btn small variant="ghost" onClick={()=>openEdit(s)}>✏️ Editar venda</Btn>
               {s.is_quote&&<Btn small variant="success" onClick={()=>convertQuote(s.id)}>✓ Converter em venda</Btn>}
               {!s.is_quote&&<Btn small variant="danger" onClick={()=>setCancelId(s.id)}>✕ Cancelar venda</Btn>}
             </div>}
@@ -1084,6 +1162,77 @@ function SalesList({sales,customers,installments,storeId,toast,storeName,storeSe
         <div style={{display:"flex",gap:9}}>
           <Btn full variant="danger" onClick={()=>cancelSale(cancelId)}>Confirmar cancelamento</Btn>
           <Btn full variant="ghost" onClick={()=>setCancelId(null)}>Voltar</Btn>
+        </div>
+      </div>
+    </Modal>}
+
+    {/* Modal editar venda */}
+    {editSale&&<Modal title={`✏️ Editar venda — ${fmtD(editSale.date)}`} onClose={()=>setEditSale(null)} wide>
+      <div style={{display:"flex",flexDirection:"column",gap:13}}>
+        {/* Cliente + Data */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+          <Sel label="Cliente" value={editF.customer_id} onChange={e=>setEditF({...editF,customer_id:e.target.value})}>
+            <option value="">Avulso</option>
+            {customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+          </Sel>
+          <Inp label="Data" type="date" value={editF.date} onChange={e=>setEditF({...editF,date:e.target.value})}/>
+        </div>
+
+        {/* Produtos */}
+        <div>
+          <div style={{fontWeight:700,fontSize:13,marginBottom:8}}>📦 Produtos</div>
+          <Sel label="Adicionar produto" value="" onChange={e=>{if(e.target.value){editAddItem(e.target.value);e.target.value=""}}}>
+            <option value="">+ Adicionar produto...</option>
+            {(products||[]).filter(p=>p.active!==false).map(p=><option key={p.id} value={p.id}>{p.name} — {R(p.sale_price)}</option>)}
+          </Sel>
+          <div style={{display:"flex",flexDirection:"column",gap:6,marginTop:9}}>
+            {editF.items.map(it=>(
+              <div key={it.pid} style={{display:"flex",alignItems:"center",gap:8,background:"#ffffff07",borderRadius:9,padding:"7px 10px"}}>
+                <span style={{flex:1,fontSize:13,fontWeight:600}}>{it.name}</span>
+                <button onClick={()=>editChgQty(it.pid,it.qty-1)} style={QB}>−</button>
+                <span style={{fontWeight:700,minWidth:20,textAlign:"center"}}>{it.qty}</span>
+                <button onClick={()=>editChgQty(it.pid,it.qty+1)} style={QB}>+</button>
+                <input type="number" value={it.sale_price} onChange={e=>setEditF({...editF,items:editF.items.map(x=>x.pid===it.pid?{...x,sale_price:+e.target.value}:x)})} style={{...iS,width:80,fontSize:12,padding:"4px 8px"}}/>
+                <button onClick={()=>editRmItem(it.pid)} style={{background:"none",border:"none",color:G.red,cursor:"pointer",fontSize:15}}>✕</button>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Desconto + Pagamento */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+          <Inp label="Desconto (R$)" type="number" min="0" step="0.01" value={editF.discount} onChange={e=>setEditF({...editF,discount:+e.target.value||0})}/>
+          <Sel label="Forma de pagamento principal" value={editF.method} onChange={e=>setEditF({...editF,method:e.target.value})}>
+            {PAYMENT_OPTS.map(o=><option key={o.key} value={o.key}>{o.label}</option>)}
+          </Sel>
+        </div>
+
+        {/* Parcelas */}
+        {editF.insts?.length>0&&<div>
+          <div style={{fontWeight:700,fontSize:13,marginBottom:8}}>📅 Parcelas</div>
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            {editF.insts.map((inst,i)=>(
+              <div key={inst.id} style={{display:"grid",gridTemplateColumns:"auto 1fr 1fr 1fr",gap:8,alignItems:"center",background:"#ffffff06",borderRadius:9,padding:"8px 10px"}}>
+                <div style={{width:26,height:26,borderRadius:"50%",background:inst.paid?G.green:G.violet,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,color:"#fff",flexShrink:0}}>{inst.number}</div>
+                <Inp label="" type="number" step="0.01" value={inst.amount} onChange={e=>setEditF({...editF,insts:editF.insts.map((x,j)=>j===i?{...x,amount:+e.target.value}:x)})}/>
+                <Inp label="" type="date" value={inst.due_date} onChange={e=>setEditF({...editF,insts:editF.insts.map((x,j)=>j===i?{...x,due_date:e.target.value}:x)})}/>
+                <Badge color={inst.paid?G.green:G.amber}>{inst.paid?"Pago":"Pendente"}</Badge>
+              </div>
+            ))}
+          </div>
+        </div>}
+
+        <Inp label="Observações" value={editF.notes} onChange={e=>setEditF({...editF,notes:e.target.value})} placeholder="Notas..."/>
+
+        {/* Total preview */}
+        <div style={{background:G.bg,borderRadius:10,padding:"10px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <span style={{color:"#ffffff88",fontSize:13}}>Total</span>
+          <span style={{color:G.pink,fontWeight:900,fontSize:18}}>{R(Math.max(0,editF.items.reduce((a,x)=>a+x.qty*Number(x.sale_price),0)-(editF.discount||0)))}</span>
+        </div>
+
+        <div style={{display:"flex",gap:9}}>
+          <Btn full onClick={saveEdit} variant="pink" disabled={editSaving}>{editSaving?<Spin/>:"💾 Salvar alterações"}</Btn>
+          <Btn full variant="ghost" onClick={()=>setEditSale(null)}>Cancelar</Btn>
         </div>
       </div>
     </Modal>}
@@ -2069,7 +2218,7 @@ export default function Page(){
   const panels=[
     <Dashboard sales={sales} products={products} customers={customers} costs={costs} installments={installments} storeSettings={storeSettings}/>,
     <NewSale products={products} customers={customers} storeId={storeId} toast={toast} allSales={sales} allInstallments={installments}/>,
-    <SalesList sales={sales} customers={customers} installments={installments} storeId={storeId} toast={toast} storeName={storeName} storeSettings={storeSettings}/>,
+    <SalesList sales={sales} customers={customers} installments={installments} storeId={storeId} toast={toast} storeName={storeName} storeSettings={storeSettings} products={products}/>,
     <DueDates installments={installments} customers={customers} storeName={storeName} toast={toast}/>,
     <Customers customers={customers} sales={sales} installments={installments} storeId={storeId} storeName={storeName} toast={toast} storeSettings={storeSettings}/>,
     <Products products={products} storeId={storeId} toast={toast}/>,

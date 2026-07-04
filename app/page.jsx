@@ -309,7 +309,7 @@ function Dashboard({sales,products,customers,costs,installments,storeSettings}){
 
   // ── CAIXA: base no recebimento real (paid_at das parcelas) ──
   const cancelledIds=new Set(sales.filter(s=>s.cancelled).map(s=>s.id));
-  const paidInsts=installments.filter(i=>i.paid&&i.paid_at&&i.paid_at.slice(0,10)>=df&&i.paid_at.slice(0,10)<=dt&&!cancelledIds.has(i.sale_id));
+  const paidInsts=installments.filter(i=>i.paid&&!cancelledIds.has(i.sale_id)&&((i.paid_at&&i.paid_at.slice(0,10)>=df&&i.paid_at.slice(0,10)<=dt)||(!i.paid_at&&i.due_date&&i.due_date>=df&&i.due_date<=dt)));
   const cashRev=paidInsts.reduce((a,i)=>a+Number(i.amount),0);
   // CMV proporcional ao recebido (receita caixa / receita competência * CMV competência)
   const cashCogs=compRev>0?compCogs*(cashRev/compRev):0;
@@ -339,7 +339,7 @@ function Dashboard({sales,products,customers,costs,installments,storeSettings}){
   const prevSales=sales.filter(s=>s.date>=prevDfStr&&s.date<=prevDtStr&&!s.cancelled&&!s.is_quote);
   const prevRevComp=prevSales.reduce((a,s)=>a+Number(s.total),0);
   const prevCogs=prevSales.reduce((a,s)=>a+s.items.reduce((b,i)=>b+Number(i.cost_price)*i.quantity,0),0);
-  const prevPaidInsts=installments.filter(i=>i.paid&&i.paid_at&&i.paid_at.slice(0,10)>=prevDfStr&&i.paid_at.slice(0,10)<=prevDtStr&&!cancelledIds.has(i.sale_id));
+  const prevPaidInsts=installments.filter(i=>i.paid&&!cancelledIds.has(i.sale_id)&&((i.paid_at&&i.paid_at.slice(0,10)>=prevDfStr&&i.paid_at.slice(0,10)<=prevDtStr)||(!i.paid_at&&i.due_date&&i.due_date>=prevDfStr&&i.due_date<=prevDtStr)));
   const prevRevCash=prevPaidInsts.reduce((a,i)=>a+Number(i.amount),0);
   const prevRev=regime==="caixa"?prevRevCash:prevRevComp;
   const prevProfit=regime==="caixa"?prevRevCash-(prevRevComp>0?prevCogs*(prevRevCash/prevRevComp):0):prevRevComp-prevCogs;
@@ -810,8 +810,7 @@ function NewSale({products,customers,storeId,toast,allSales,allInstallments}){
         total:totalBase,method:mainPay.method,
         installments:1,notes,
         payment_split:JSON.stringify(filledPay),
-      }).select().single();
-      if(sErr)throw sErr;
+      }).select().single();      if(sErr)throw sErr;
 
       await sb.from("sale_items").insert(items.map(it=>({
         sale_id:sale.id,product_id:it.pid,product_name:it.name,
@@ -988,19 +987,26 @@ function SalesList({sales,customers,installments,storeId,toast,storeName,storeSe
   ];
 
   const openEdit=(s)=>{
+    // Parse existing payment split if available
+    let existingPayments=[{method:s.method||"pix",valor:String(s.total||""),parc:1,diaVenc:"10"}];
+    if(s.payment_split){
+      try{
+        const parsed=JSON.parse(s.payment_split);
+        if(Array.isArray(parsed)&&parsed.length>0)existingPayments=parsed;
+      }catch(e){}
+    }
     setEditF({
       customer_id:s.customer_id||"",
       date:s.date,
       notes:s.notes||"",
       method:s.method||"pix",
       discount:s.discount||0,
-      // parse items
+      editPayments:existingPayments,
       items:s.items.map(it=>({
         pid:it.product_id,name:it.product_name,
         qty:it.quantity,sale_price:it.unit_price,cost_price:it.cost_price,
         category:it.category,
       })),
-      // installments edit
       insts:installments.filter(i=>i.sale_id===s.id).map(i=>({
         id:i.id,number:i.number,amount:i.amount,due_date:i.due_date,paid:i.paid,method:i.method||s.method,
       })),
@@ -1016,16 +1022,17 @@ function SalesList({sales,customers,installments,storeId,toast,storeName,storeSe
       const cmv=editF.items.reduce((a,x)=>a+x.qty*Number(x.cost_price),0);
       const disc=Number(editF.discount)||0;
       const total=Math.max(0,subTotal-disc);
+      const pays=editF.editPayments||[{method:editF.method||"pix",valor:String(total)}];
+      const mainPay=pays.reduce((a,b)=>(+b.valor||0)>(+a.valor||0)?b:a,pays[0]);
 
-      // Update sale header
       await sb.from("sales").update({
         customer_id:editF.customer_id||null,
         date:editF.date,notes:editF.notes,
-        method:editF.method,subtotal:subTotal,
+        method:mainPay.method||editF.method,subtotal:subTotal,
         discount:disc,total_cost:cmv,total,
+        payment_split:JSON.stringify(pays),
       }).eq("id",editSale.id);
 
-      // Replace items
       await sb.from("sale_items").delete().eq("sale_id",editSale.id);
       await sb.from("sale_items").insert(editF.items.map(it=>({
         sale_id:editSale.id,product_id:it.pid,product_name:it.name,
@@ -1033,7 +1040,6 @@ function SalesList({sales,customers,installments,storeId,toast,storeName,storeSe
         unit_price:it.sale_price,cost_price:it.cost_price,
       })));
 
-      // Update installments amounts/dates
       for(const inst of editF.insts){
         await sb.from("installments").update({
           amount:inst.amount,due_date:inst.due_date,method:inst.method,
@@ -1232,12 +1238,51 @@ function SalesList({sales,customers,installments,storeId,toast,storeName,storeSe
           </div>
         </div>
 
-        {/* Desconto + Pagamento */}
+        {/* Desconto + Pagamentos múltiplos */}
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
           <Inp label="Desconto (R$)" type="number" min="0" step="0.01" value={editF.discount} onChange={e=>setEditF({...editF,discount:+e.target.value||0})}/>
-          <Sel label="Forma de pagamento principal" value={editF.method} onChange={e=>setEditF({...editF,method:e.target.value})}>
-            {PAYMENT_OPTS.map(o=><option key={o.key} value={o.key}>{o.label}</option>)}
-          </Sel>
+          <div style={{background:"#ffffff06",borderRadius:9,padding:"9px 12px",display:"flex",flexDirection:"column",gap:2}}>
+            <div style={{color:"#ffffffaa",fontSize:10,textTransform:"uppercase",fontWeight:600}}>Total</div>
+            <div style={{color:G.pink,fontWeight:900,fontSize:18}}>{R(Math.max(0,editF.items.reduce((a,x)=>a+x.qty*Number(x.sale_price),0)-(editF.discount||0)))}</div>
+          </div>
+        </div>
+
+        {/* Pagamentos múltiplos */}
+        <div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:9}}>
+            <div style={{fontWeight:700,fontSize:13}}>💳 Formas de pagamento</div>
+            <Btn small variant="ghost" onClick={()=>setEditF({...editF,editPayments:[...(editF.editPayments||[{method:editF.method||"pix",valor:"",parc:1,diaVenc:"10"}]),{method:"pix",valor:"",parc:1,diaVenc:"10"}]})}>+ Adicionar</Btn>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {(editF.editPayments||[{method:editF.method||"pix",valor:"",parc:1,diaVenc:"10"}]).map((pay,i)=>{
+              const isParc=pay.method==="credit"||pay.method==="crediario";
+              const col=PAYMENT_OPTS.find(o=>o.key===pay.method)?.color||G.muted;
+              const updPay=(field,val)=>{
+                const arr=[...(editF.editPayments||[{method:editF.method||"pix",valor:"",parc:1,diaVenc:"10"}])];
+                arr[i]={...arr[i],[field]:val};
+                setEditF({...editF,editPayments:arr,method:arr[0].method});
+              };
+              const rmPay=()=>{
+                const arr=(editF.editPayments||[]).filter((_,j)=>j!==i);
+                setEditF({...editF,editPayments:arr.length?arr:[{method:"pix",valor:"",parc:1,diaVenc:"10"}]});
+              };
+              return(<div key={i} style={{background:"#ffffff06",borderRadius:9,padding:"10px 12px",border:`1px solid ${col}30`}}>
+                <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:isParc?8:0}}>
+                  <select value={pay.method} onChange={e=>updPay("method",e.target.value)} style={{...iS,flex:1,fontSize:13,color:col,fontWeight:600}}>
+                    {PAYMENT_OPTS.map(o=><option key={o.key} value={o.key}>{o.label}</option>)}
+                  </select>
+                  <input type="number" min="0" step="0.01" placeholder="Valor R$" value={pay.valor} onChange={e=>updPay("valor",e.target.value)} style={{...iS,width:100,fontSize:13}}/>
+                  {(editF.editPayments||[]).length>1&&<button onClick={rmPay} style={{background:"none",border:"none",color:G.red,cursor:"pointer",fontSize:18}}>✕</button>}
+                </div>
+                {isParc&&<div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                  {[1,2,3,4,5,6,8,10,12].map(n=><button key={n} onClick={()=>updPay("parc",n)} style={{padding:"4px 9px",borderRadius:7,border:"none",background:pay.parc===n?col:"#ffffff10",color:pay.parc===n?"#fff":"#ffffffaa",fontSize:11,fontWeight:pay.parc===n?700:400,cursor:"pointer"}}>{n}x</button>)}
+                  {pay.method==="crediario"&&pay.parc>1&&<select value={pay.diaVenc} onChange={e=>updPay("diaVenc",e.target.value)} style={{...iS,width:90,fontSize:11}}>
+                    {["5","10","15","20","25","30"].map(d=><option key={d} value={d}>Dia {d}</option>)}
+                  </select>}
+                </div>}
+              </div>);
+            })}
+          </div>
         </div>
 
         {/* Parcelas */}
@@ -1256,12 +1301,6 @@ function SalesList({sales,customers,installments,storeId,toast,storeName,storeSe
         </div>}
 
         <Inp label="Observações" value={editF.notes} onChange={e=>setEditF({...editF,notes:e.target.value})} placeholder="Notas..."/>
-
-        {/* Total preview */}
-        <div style={{background:G.bg,borderRadius:10,padding:"10px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <span style={{color:"#ffffff88",fontSize:13}}>Total</span>
-          <span style={{color:G.pink,fontWeight:900,fontSize:18}}>{R(Math.max(0,editF.items.reduce((a,x)=>a+x.qty*Number(x.sale_price),0)-(editF.discount||0)))}</span>
-        </div>
 
         <div style={{display:"flex",gap:9}}>
           <Btn full onClick={saveEdit} variant="pink" disabled={editSaving}>{editSaving?<Spin/>:"💾 Salvar alterações"}</Btn>
@@ -2157,7 +2196,8 @@ function CashFlow({sales,costs,installments}){
   const cancelledIds=new Set(sales.filter(s=>s.cancelled).map(s=>s.id));
 
   // CAIXA: parcelas pagas no mês
-  const cashInsts=installments.filter(i=>i.paid&&i.paid_at?.startsWith(month)&&!cancelledIds.has(i.sale_id));
+  // Parcelas pagas no mês: usa paid_at se disponível, senão due_date como fallback
+  const cashInsts=installments.filter(i=>i.paid&&!cancelledIds.has(i.sale_id)&&((i.paid_at&&i.paid_at.startsWith(month))||(!i.paid_at&&i.due_date&&i.due_date.startsWith(month))));
   const cashIn=cashInsts.reduce((a,i)=>a+Number(i.amount),0);
 
   // COMPETÊNCIA: vendas do mês

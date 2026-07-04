@@ -258,8 +258,8 @@ function PeriodPicker({df,dt,setDf,setDt,preset,setPreset}){
       </div>
       {preset==="custom"&&(
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:9}}>
-          <Inp label="De" type="date" value={df} onChange={e=>setDf(e.target.value)}/>
-          <Inp label="Até" type="date" value={dt} onChange={e=>setDt(e.target.value)}/>
+          <Inp label="De" type="date" value={df} onChange={e=>{if(e.target.value)setDf(e.target.value);}}/>
+          <Inp label="Até" type="date" value={dt} onChange={e=>{if(e.target.value)setDt(e.target.value);}}/>
         </div>
       )}
     </div>
@@ -355,7 +355,7 @@ function Dashboard({sales,products,customers,costs,installments,storeSettings}){
   const todayStr=`${String(new Date().getMonth()+1).padStart(2,"0")}-${String(new Date().getDate()).padStart(2,"0")}`;
   const birthdays=customers.filter(c=>c.birthday&&c.birthday.slice(5)===todayStr);
 
-  const days=Math.min(60,Math.ceil((new Date(dt)-new Date(df))/(86400000))+1);
+  const days=Math.max(1,Math.min(60,Math.ceil((new Date(dt)-new Date(df))/(86400000))+1));
   const chartData=Array.from({length:days},(_,i)=>{
     const d=new Date(df+"T12:00:00");d.setDate(d.getDate()+i);
     const ds=d.toISOString().slice(0,10);

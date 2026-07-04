@@ -293,58 +293,77 @@ function Dashboard({sales,products,customers,costs,installments,storeSettings}){
   const [preset,setPreset]=useState("30d");
   const [df,setDf]=useState(()=>{const d=new Date();d.setDate(d.getDate()-29);return d.toISOString().slice(0,10);});
   const [dt,setDt]=useState(TODAY);
+  const [regime,setRegime]=useState("competencia"); // "competencia" | "caixa"
   const meta=storeSettings?.monthly_goal||0;
 
-  // Período atual — só vendas confirmadas (não orçamentos, não canceladas)
+  // ── COMPETÊNCIA: base na data da venda ──
   const fSales=sales.filter(s=>s.date>=df&&s.date<=dt&&!s.cancelled&&!s.is_quote);
   const fQuotes=sales.filter(s=>s.date>=df&&s.date<=dt&&!s.cancelled&&s.is_quote);
-  const totalRev=fSales.reduce((a,s)=>a+Number(s.total),0);
-  const totalCogs=fSales.reduce((a,s)=>a+s.items.reduce((b,i)=>b+Number(i.cost_price)*i.quantity,0),0);
+  const compRev=fSales.reduce((a,s)=>a+Number(s.total),0);
+  const compCogs=fSales.reduce((a,s)=>a+s.items.reduce((b,i)=>b+Number(i.cost_price)*i.quantity,0),0);
   const fixedCosts=costs.filter(c=>c.type==="fixed"&&(!c.ref_month||(c.ref_month>=df.slice(0,7)&&c.ref_month<=dt.slice(0,7)))).reduce((a,c)=>a+Number(c.amount),0);
   const varCosts=costs.filter(c=>c.type==="variable"&&c.created_at?.slice(0,10)>=df&&c.created_at?.slice(0,10)<=dt).reduce((a,c)=>a+Number(c.amount),0);
-  const totalCosts=totalCogs+fixedCosts+varCosts;
-  const grossMargin=totalRev-totalCogs;
-  const netProfit=totalRev-totalCosts;
+  const compCosts=compCogs+fixedCosts+varCosts;
+  const compGross=compRev-compCogs;
+  const compProfit=compRev-compCosts;
+
+  // ── CAIXA: base no recebimento real (paid_at das parcelas) ──
+  const cancelledIds=new Set(sales.filter(s=>s.cancelled).map(s=>s.id));
+  const paidInsts=installments.filter(i=>i.paid&&i.paid_at&&i.paid_at.slice(0,10)>=df&&i.paid_at.slice(0,10)<=dt&&!cancelledIds.has(i.sale_id));
+  const cashRev=paidInsts.reduce((a,i)=>a+Number(i.amount),0);
+  // CMV proporcional ao recebido (receita caixa / receita competência * CMV competência)
+  const cashCogs=compRev>0?compCogs*(cashRev/compRev):0;
+  const cashCosts=cashCogs+fixedCosts+varCosts;
+  const cashGross=cashRev-cashCogs;
+  const cashProfit=cashRev-cashCosts;
+
+  // Seleciona regime ativo
+  const totalRev=regime==="caixa"?cashRev:compRev;
+  const totalCogs=regime==="caixa"?cashCogs:compCogs;
+  const totalCosts=regime==="caixa"?cashCosts:compCosts;
+  const grossMargin=regime==="caixa"?cashGross:compGross;
+  const netProfit=regime==="caixa"?cashProfit:compProfit;
   const marginPct=totalRev?((grossMargin/totalRev)*100).toFixed(1):0;
-  const pendingAll=installments.filter(i=>!i.paid).reduce((a,i)=>a+Number(i.amount),0);
-  const overdueAll=installments.filter(i=>!i.paid&&i.due_date<TODAY()).reduce((a,i)=>a+Number(i.amount),0);
-  const ticketMedio=fSales.length?totalRev/fSales.length:0;
+
+  const pendingAll=installments.filter(i=>!i.paid&&!cancelledIds.has(i.sale_id)).reduce((a,i)=>a+Number(i.amount),0);
+  const overdueAll=installments.filter(i=>!i.paid&&i.due_date<TODAY()&&!cancelledIds.has(i.sale_id)).reduce((a,i)=>a+Number(i.amount),0);
+  const ticketMedio=fSales.length?compRev/fSales.length:0;
   const taxaConv=fSales.length+fQuotes.length>0?(fSales.length/(fSales.length+fQuotes.length)*100):0;
 
-  // Período anterior equivalente
+  // Período anterior
   const diffDays=Math.max(1,Math.ceil((new Date(dt)-new Date(df))/(86400000)));
   const prevDt=new Date(df+"T12:00:00");prevDt.setDate(prevDt.getDate()-1);
   const prevDf=new Date(prevDt);prevDf.setDate(prevDf.getDate()-(diffDays-1));
   const prevDfStr=prevDf.toISOString().slice(0,10);
   const prevDtStr=prevDt.toISOString().slice(0,10);
   const prevSales=sales.filter(s=>s.date>=prevDfStr&&s.date<=prevDtStr&&!s.cancelled&&!s.is_quote);
-  const prevRev=prevSales.reduce((a,s)=>a+Number(s.total),0);
+  const prevRevComp=prevSales.reduce((a,s)=>a+Number(s.total),0);
   const prevCogs=prevSales.reduce((a,s)=>a+s.items.reduce((b,i)=>b+Number(i.cost_price)*i.quantity,0),0);
-  const prevProfit=prevRev-prevCogs;
-  const prevTicket=prevSales.length?prevRev/prevSales.length:0;
+  const prevPaidInsts=installments.filter(i=>i.paid&&i.paid_at&&i.paid_at.slice(0,10)>=prevDfStr&&i.paid_at.slice(0,10)<=prevDtStr&&!cancelledIds.has(i.sale_id));
+  const prevRevCash=prevPaidInsts.reduce((a,i)=>a+Number(i.amount),0);
+  const prevRev=regime==="caixa"?prevRevCash:prevRevComp;
+  const prevProfit=regime==="caixa"?prevRevCash-(prevRevComp>0?prevCogs*(prevRevCash/prevRevComp):0):prevRevComp-prevCogs;
+  const prevTicket=prevSales.length?prevRevComp/prevSales.length:0;
 
   const varPct=(cur,prev)=>{if(!prev||prev===0)return null;return((cur-prev)/prev*100);};
   const VarTag=({cur,prev})=>{const v=varPct(cur,prev);if(v===null)return null;const up=v>=0;return <span style={{fontSize:11,fontWeight:700,color:up?G.green:G.red,marginLeft:5,background:up?`${G.green}18`:`${G.red}18`,padding:"2px 6px",borderRadius:10}}>{up?"↑":"↓"}{Math.abs(v).toFixed(1)}%</span>;};
 
-  // Inadimplência proativa
-  const inadimPct=totalRev>0?(overdueAll/totalRev)*100:0;
-
-  // Mini-ranking de vendedores
+  const inadimPct=compRev>0?(overdueAll/compRev)*100:0;
   const sellerMap={};fSales.forEach(s=>{if(s.seller_name){sellerMap[s.seller_name]=(sellerMap[s.seller_name]||0)+Number(s.total);}});
   const sellers=Object.entries(sellerMap).sort((a,b)=>b[1]-a[1]).slice(0,5);
-
-  // Meta
   const metaPct=meta?Math.min(100,(totalRev/meta)*100):0;
-
-  // Aniversários
   const todayStr=`${String(new Date().getMonth()+1).padStart(2,"0")}-${String(new Date().getDate()).padStart(2,"0")}`;
   const birthdays=customers.filter(c=>c.birthday&&c.birthday.slice(5)===todayStr);
 
-  // Gráfico
   const days=Math.min(60,Math.ceil((new Date(dt)-new Date(df))/(86400000))+1);
   const chartData=Array.from({length:days},(_,i)=>{
     const d=new Date(df+"T12:00:00");d.setDate(d.getDate()+i);
-    const ds=d.toISOString().slice(0,10);const dayS=fSales.filter(s=>s.date===ds);
+    const ds=d.toISOString().slice(0,10);
+    if(regime==="caixa"){
+      const dayInsts=paidInsts.filter(i=>i.paid_at?.slice(0,10)===ds);
+      return{day:d.toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit"}),receita:+dayInsts.reduce((a,i)=>a+Number(i.amount),0).toFixed(2),custo:0};
+    }
+    const dayS=fSales.filter(s=>s.date===ds);
     return{day:d.toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit"}),receita:+dayS.reduce((a,s)=>a+Number(s.total),0).toFixed(2),custo:+dayS.reduce((a,s)=>a+s.items.reduce((b,it)=>b+Number(it.cost_price)*it.quantity,0),0).toFixed(2)};
   });
   const catMap={};fSales.forEach(s=>s.items.forEach(it=>{catMap[it.category||"Geral"]=(catMap[it.category||"Geral"]||0)+Number(it.unit_price)*it.quantity;}));
@@ -353,7 +372,21 @@ function Dashboard({sales,products,customers,costs,installments,storeSettings}){
   const topC=customers.map(c=>{const cs=fSales.filter(s=>s.customer_id===c.id);return{...c,spent:cs.reduce((a,s)=>a+Number(s.total),0),n:cs.length};}).sort((a,b)=>b.spent-a.spent).slice(0,4);
 
   return(<div style={{display:"flex",flexDirection:"column",gap:14}}>
-    <Card style={{padding:"12px 16px"}}><PeriodPicker df={df} dt={dt} setDf={setDf} setDt={setDt} preset={preset} setPreset={setPreset}/></Card>
+    {/* Período + toggle regime */}
+    <Card style={{padding:"12px 16px"}}>
+      <PeriodPicker df={df} dt={dt} setDf={setDf} setDt={setDt} preset={preset} setPreset={setPreset}/>
+      <div style={{marginTop:10,display:"flex",gap:0,background:G.bg,borderRadius:9,padding:3,border:`1px solid ${G.bord2}`}}>
+        <button onClick={()=>setRegime("competencia")} style={{flex:1,padding:"7px 0",borderRadius:7,border:"none",background:regime==="competencia"?G.violet:"transparent",color:regime==="competencia"?"#fff":"#ffffffaa",fontWeight:regime==="competencia"?700:500,fontSize:12,cursor:"pointer"}}>
+          📋 Competência <span style={{fontSize:10,opacity:.8}}>(data da venda)</span>
+        </button>
+        <button onClick={()=>setRegime("caixa")} style={{flex:1,padding:"7px 0",borderRadius:7,border:"none",background:regime==="caixa"?G.green:"transparent",color:regime==="caixa"?"#fff":"#ffffffaa",fontWeight:regime==="caixa"?700:500,fontSize:12,cursor:"pointer"}}>
+          💵 Caixa <span style={{fontSize:10,opacity:.8}}>(recebimento real)</span>
+        </button>
+      </div>
+      {regime==="caixa"&&<div style={{marginTop:8,fontSize:11,color:"#ffffff66",textAlign:"center"}}>
+        Receita = parcelas efetivamente pagas no período · CMV proporcional ao recebido
+      </div>}
+    </Card>
 
     {/* Aniversários */}
     {birthdays.length>0&&<Card style={{background:"#fbbf2410",borderColor:G.amber+"44"}}>
@@ -2118,7 +2151,139 @@ function WhatsAppMessages({storeSettings,storeId,toast,customers,installments,st
   </div>);
 }
 
-const TABS=[{l:"Dashboard",i:"📊"},{l:"Nova Venda",i:"🛒"},{l:"Vendas",i:"🧾"},{l:"Vencimentos",i:"📅"},{l:"Clientes",i:"👤"},{l:"Produtos",i:"👗"},{l:"Estoque",i:"📦"},{l:"Custos",i:"💸"},{l:"Relatórios",i:"📋"},{l:"WhatsApp",i:"📱"},{l:"Config",i:"⚙️"}];
+// ── Caixa ─────────────────────────────────────────────────────
+function CashFlow({sales,costs,installments}){
+  const [month,setMonth]=useState(TODAY().slice(0,7));
+  const cancelledIds=new Set(sales.filter(s=>s.cancelled).map(s=>s.id));
+
+  // CAIXA: parcelas pagas no mês
+  const cashInsts=installments.filter(i=>i.paid&&i.paid_at?.startsWith(month)&&!cancelledIds.has(i.sale_id));
+  const cashIn=cashInsts.reduce((a,i)=>a+Number(i.amount),0);
+
+  // COMPETÊNCIA: vendas do mês
+  const mSales=sales.filter(s=>s.date.startsWith(month)&&!s.cancelled&&!s.is_quote);
+  const compIn=mSales.reduce((a,s)=>a+Number(s.total),0);
+
+  // Custos do mês
+  const mCosts=costs.filter(c=>c.ref_month===month);
+  const totalOut=mCosts.reduce((a,c)=>a+Number(c.amount),0);
+
+  // A receber no mês (vencimento no mês, não pago)
+  const aReceberMes=installments.filter(i=>!i.paid&&i.due_date.startsWith(month)&&!cancelledIds.has(i.sale_id)).reduce((a,i)=>a+Number(i.amount),0);
+
+  // Diferença: o que ficou a receber (vendeu mas não recebeu)
+  const gap=compIn-cashIn;
+
+  // Gráfico diário caixa
+  const daysInMonth=new Date(+month.split("-")[0], +month.split("-")[1], 0).getDate();
+  const dailyData=Array.from({length:daysInMonth},(_,i)=>{
+    const ds=`${month}-${String(i+1).padStart(2,"0")}`;
+    const dayIn=cashInsts.filter(x=>x.paid_at?.slice(0,10)===ds).reduce((a,x)=>a+Number(x.amount),0);
+    const dayComp=mSales.filter(s=>s.date===ds).reduce((a,s)=>a+Number(s.total),0);
+    return{day:String(i+1),caixa:+dayIn.toFixed(2),competencia:+dayComp.toFixed(2)};
+  }).filter(d=>d.caixa>0||d.competencia>0);
+
+  // Saídas por forma de pagamento (caixa)
+  const byMethod={};cashInsts.forEach(i=>{const m=i.method||"outros";byMethod[m]=(byMethod[m]||0)+Number(i.amount);});
+
+  return(<div style={{display:"flex",flexDirection:"column",gap:14}}>
+    <Inp label="Mês" type="month" value={month} onChange={e=>setMonth(e.target.value)} style={{maxWidth:220}}/>
+
+    {/* KPIs lado a lado */}
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+      <Card style={{borderLeft:`3px solid ${G.violet}`,padding:"13px 14px"}}>
+        <div style={{color:"#ffffffaa",fontSize:10,textTransform:"uppercase",fontWeight:600,marginBottom:4}}>📋 Competência</div>
+        <div style={{color:G.violet,fontWeight:900,fontSize:18}}>{R(compIn)}</div>
+        <div style={{color:"#ffffff66",fontSize:11,marginTop:3}}>Vendas lançadas no mês</div>
+      </Card>
+      <Card style={{borderLeft:`3px solid ${G.green}`,padding:"13px 14px"}}>
+        <div style={{color:"#ffffffaa",fontSize:10,textTransform:"uppercase",fontWeight:600,marginBottom:4}}>💵 Caixa</div>
+        <div style={{color:G.green,fontWeight:900,fontSize:18}}>{R(cashIn)}</div>
+        <div style={{color:"#ffffff66",fontSize:11,marginTop:3}}>Recebido efetivamente</div>
+      </Card>
+    </div>
+
+    {/* Gap */}
+    <Card style={{background:gap>0?`${G.amber}08`:`${G.green}08`,borderColor:gap>0?G.amber+"44":G.green+"44"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
+        <div>
+          <div style={{fontWeight:700,fontSize:14,color:gap>0?G.amber:G.green}}>{gap>0?"⏳ A receber do mês":"✅ Tudo recebido"}</div>
+          <div style={{color:"#ffffff88",fontSize:12,marginTop:2}}>{gap>0?"Vendido mas ainda não recebido no período":"Toda a receita do mês já entrou no caixa"}</div>
+        </div>
+        <div style={{textAlign:"right"}}>
+          <div style={{color:gap>0?G.amber:G.green,fontWeight:900,fontSize:20}}>{R(Math.abs(gap))}</div>
+          {compIn>0&&<div style={{color:"#ffffff66",fontSize:11}}>{((Math.abs(gap)/compIn)*100).toFixed(1)}% da receita</div>}
+        </div>
+      </div>
+    </Card>
+
+    {/* Saldo do mês */}
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+      {[
+        ["💵 Entradas (caixa)",cashIn,G.green],
+        ["💸 Saídas (custos)",totalOut,G.red],
+        ["📊 Saldo líquido",cashIn-totalOut,(cashIn-totalOut)>=0?G.green:G.red],
+      ].map(([l,v,col])=>(
+        <Card key={l} style={{padding:"11px 12px",borderLeft:`3px solid ${col}`}}>
+          <div style={{color:"#ffffffaa",fontSize:10,textTransform:"uppercase",fontWeight:600}}>{l}</div>
+          <div style={{color:col,fontWeight:800,fontSize:15,marginTop:4}}>{R(v)}</div>
+        </Card>
+      ))}
+    </div>
+
+    {/* A receber no mês */}
+    {aReceberMes>0&&<Card style={{borderColor:G.sky+"44"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <div><div style={{fontWeight:700,color:G.sky}}>📅 Vence em {fmtMonth(month+"-01")}</div><div style={{color:"#ffffff88",fontSize:12}}>Parcelas com vencimento neste mês ainda em aberto</div></div>
+        <div style={{color:G.sky,fontWeight:800,fontSize:16}}>{R(aReceberMes)}</div>
+      </div>
+    </Card>}
+
+    {/* Gráfico comparativo */}
+    {dailyData.length>0&&<Card>
+      <div style={{fontWeight:700,marginBottom:12,fontSize:14}}>📊 Competência vs Caixa — dia a dia</div>
+      <ResponsiveContainer width="100%" height={180}>
+        <BarChart data={dailyData} margin={{top:4,right:4,left:-20,bottom:0}}>
+          <XAxis dataKey="day" tick={{fill:"#ffffffaa",fontSize:9}} axisLine={false} tickLine={false}/>
+          <YAxis tick={{fill:"#ffffffaa",fontSize:9}} axisLine={false} tickLine={false} tickFormatter={v=>`${(v/1000).toFixed(1)}k`}/>
+          <Tooltip formatter={v=>R(v)} contentStyle={{background:G.surf,border:`1px solid ${G.bord}`,borderRadius:8,fontSize:12}}/>
+          <Bar dataKey="competencia" name="Competência" fill={G.violet} radius={[3,3,0,0]} opacity={0.7}/>
+          <Bar dataKey="caixa" name="Caixa" fill={G.green} radius={[3,3,0,0]}/>
+        </BarChart>
+      </ResponsiveContainer>
+      <div style={{display:"flex",gap:14,justifyContent:"center",marginTop:6}}>
+        <span style={{fontSize:11,color:G.violet}}>■ Competência (venda)</span>
+        <span style={{fontSize:11,color:G.green}}>■ Caixa (recebido)</span>
+      </div>
+    </Card>}
+
+    {/* Entradas por forma de pagamento */}
+    {Object.keys(byMethod).length>0&&<Card>
+      <div style={{fontWeight:700,marginBottom:10,fontSize:14}}>💳 Entradas por forma de pagamento</div>
+      {Object.entries(byMethod).sort((a,b)=>b[1]-a[1]).map(([m,v])=>(
+        <div key={m} style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+          <div style={{width:8,height:8,borderRadius:"50%",background:MC[m]||G.muted,flexShrink:0}}/>
+          <span style={{flex:1,fontSize:13,textTransform:"capitalize"}}>{METHODS[m]||m}</span>
+          <span style={{color:MC[m]||G.muted,fontWeight:700,fontSize:13}}>{R(v)}</span>
+          <span style={{color:"#ffffff66",fontSize:11}}>{cashIn>0?((v/cashIn)*100).toFixed(0):0}%</span>
+        </div>
+      ))}
+    </Card>}
+
+    {/* Saídas do mês */}
+    <Card>
+      <div style={{fontWeight:700,marginBottom:10,fontSize:14}}>💸 Saídas do mês</div>
+      {mCosts.length===0?<div style={{color:"#ffffff66",fontSize:13}}>Nenhum custo lançado para este mês.</div>:mCosts.map(c=>(
+        <div key={c.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+          <div><div style={{fontSize:13}}>{c.name}</div><div style={{color:"#ffffff66",fontSize:11}}>{c.type==="fixed"?"Fixo":"Variável"}</div></div>
+          <span style={{color:G.red,fontWeight:700}}>{R(c.amount)}</span>
+        </div>
+      ))}
+    </Card>
+  </div>);
+}
+
+const TABS=[{l:"Dashboard",i:"📊"},{l:"Nova Venda",i:"🛒"},{l:"Vendas",i:"🧾"},{l:"Vencimentos",i:"📅"},{l:"Clientes",i:"👤"},{l:"Produtos",i:"👗"},{l:"Estoque",i:"📦"},{l:"Custos",i:"💸"},{l:"Caixa",i:"💵"},{l:"Relatórios",i:"📋"},{l:"WhatsApp",i:"📱"},{l:"Config",i:"⚙️"}];
 
 export default function Page(){
   const [user,    setUser]    = useState(null);
@@ -2224,6 +2389,7 @@ export default function Page(){
     <Products products={products} storeId={storeId} toast={toast}/>,
     <Estoque products={products} sales={sales}/>,
     <Costs costs={costs} customers={customers} storeId={storeId} toast={toast}/>,
+    <CashFlow sales={sales} costs={costs} installments={installments}/>,
     <Reports sales={sales} costs={costs} customers={customers} installments={installments} storeName={storeName}/>,
     <WhatsAppMessages storeSettings={storeSettings} storeId={storeId} toast={toast} customers={customers} installments={installments} storeName={storeName}/>,
     <Settings storeName={storeName} storeId={storeId} toast={toast} onSignOut={handleSignOut} storeSettings={storeSettings} onSettingsUpdate={s=>{setStoreSettings(s);setSName(s.name);}} products={products} sales={sales} customers={customers}/>,

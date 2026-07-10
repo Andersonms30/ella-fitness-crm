@@ -1088,9 +1088,12 @@ function SalesList({sales,customers,installments,storeId,toast,storeName,storeSe
     toast("Orçamento convertido em venda! ✓");
   };
 
-  const printReceipt=(s)=>{
+  const printReceipt=(s,sInst=[])=>{
     const cust=customers.find(c=>c.id===s.customer_id);
     const loja=storeName||"FitPro Gestão CRM";
+    const instSorted=[...sInst].sort((a,b)=>(a.number||0)-(b.number||0));
+    const paidAmt=instSorted.reduce((a,i)=>a+(i.paid?Number(i.amount):0),0);
+    const pendingAmt=instSorted.reduce((a,i)=>a+(!i.paid?Number(i.amount):0),0);
     const w=window.open("","_blank");
     w.document.write(`<!DOCTYPE html><html><head><title>Recibo</title>
     <style>
@@ -1103,6 +1106,9 @@ function SalesList({sales,customers,installments,storeId,toast,storeName,storeSe
       .total{font-size:18px;font-weight:700;color:#7c3aed}
       .footer{text-align:center;color:#aaa;font-size:11px;margin-top:16px}
       table{width:100%;border-collapse:collapse}td{padding:4px 0}
+      .instTitle{font-weight:700;margin-bottom:6px}
+      .paid{color:#16a34a;font-weight:700}
+      .pend{color:#dc2626;font-weight:700}
     </style></head><body>
     <h2>${loja}</h2>
     <div class="sub">Comprovante de Venda</div>
@@ -1118,6 +1124,18 @@ function SalesList({sales,customers,installments,storeId,toast,storeName,storeSe
     <hr>
     ${s.discount>0?`<div class="row"><span>Desconto:</span><span style="color:#16a34a">-${R(s.discount)}</span></div>`:""}
     <div class="row total"><span>TOTAL</span><span>${R(s.total)}</span></div>
+    ${instSorted.length>0?`
+    <hr>
+    <div class="instTitle">📅 Parcelas</div>
+    <table>
+      ${instSorted.map(inst=>`<tr>
+        <td>${inst.number}ª · Venc ${fmtD(inst.due_date)}</td>
+        <td style="text-align:right" class="${inst.paid?"paid":"pend"}">${R(inst.amount)}${inst.paid?" ✓ Paga":""}</td>
+      </tr>`).join("")}
+    </table>
+    <div class="row" style="margin-top:8px"><span>Pago até agora:</span><span class="paid">${R(paidAmt)}</span></div>
+    <div class="row"><span><b>Saldo em aberto:</b></span><span class="${pendingAmt>0?"pend":"paid"}">${R(pendingAmt)}</span></div>
+    `:""}
     ${s.notes?`<hr><div style="color:#666;font-size:11px">Obs: ${s.notes}</div>`:""}
     <div class="footer">Obrigado pela preferencia! 💜<br>${loja}</div>
     <script>window.onload=()=>window.print();</script>
@@ -1188,7 +1206,7 @@ function SalesList({sales,customers,installments,storeId,toast,storeName,storeSe
             </div>
             {/* Ações */}
             {!s.cancelled&&<div style={{display:"flex",gap:7,flexWrap:"wrap",paddingTop:10,borderTop:`1px solid ${G.bord}`}}>
-              <Btn small variant="ghost" onClick={()=>printReceipt(s)}>🖨️ Imprimir recibo</Btn>
+              <Btn small variant="ghost" onClick={()=>printReceipt(s,sInst)}>🖨️ Imprimir recibo</Btn>
               <Btn small variant="ghost" onClick={()=>openEdit(s)}>✏️ Editar venda</Btn>
               {s.is_quote&&<Btn small variant="success" onClick={()=>convertQuote(s.id)}>✓ Converter em venda</Btn>}
               {!s.is_quote&&<Btn small variant="danger" onClick={()=>setCancelId(s.id)}>✕ Cancelar venda</Btn>}
@@ -2254,6 +2272,20 @@ function CashFlow({sales,costs,installments}){
   // Saídas por forma de pagamento (caixa)
   const byMethod={};cashInsts.forEach(i=>{const m=i.method||"outros";byMethod[m]=(byMethod[m]||0)+Number(i.amount);});
 
+  // ── Projeção de recebíveis: todas as parcelas em aberto, agrupadas por mês de vencimento ──
+  const todayMonth=TODAY().slice(0,7);
+  const pendingInsts=installments.filter(i=>!i.paid&&!cancelledIds.has(i.sale_id));
+  const overdueInsts=pendingInsts.filter(i=>i.due_date<TODAY());
+  const overdueAmt=overdueInsts.reduce((a,i)=>a+Number(i.amount),0);
+  const futureMap={};
+  pendingInsts.filter(i=>i.due_date>=TODAY()).forEach(i=>{
+    const mk=i.due_date.slice(0,7);
+    if(!futureMap[mk])futureMap[mk]={amount:0,count:0};
+    futureMap[mk].amount+=Number(i.amount);futureMap[mk].count++;
+  });
+  const futureMonths=Object.keys(futureMap).sort();
+  const totalPending=pendingInsts.reduce((a,i)=>a+Number(i.amount),0);
+
   return(<div style={{display:"flex",flexDirection:"column",gap:14}}>
     <Inp label="Mês" type="month" value={month} onChange={e=>setMonth(e.target.value)} style={{maxWidth:220}}/>
 
@@ -2337,6 +2369,34 @@ function CashFlow({sales,costs,installments}){
         </div>
       ))}
     </Card>}
+
+    {/* Projeção de recebíveis por mês */}
+    <Card>
+      <div style={{fontWeight:700,fontSize:14}}>📆 Recebíveis Futuros — Mês a Mês</div>
+      <div style={{color:"#ffffff66",fontSize:12,marginBottom:10}}>Total em aberto: <b style={{color:G.sky}}>{R(totalPending)}</b></div>
+      {overdueAmt>0&&(
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"9px 12px",background:`${G.red}10`,border:`1px solid ${G.red}30`,borderRadius:9,marginBottom:7}}>
+          <div>
+            <div style={{fontWeight:700,color:G.red,fontSize:13}}>⚠️ Vencido</div>
+            <div style={{color:"#ffffff66",fontSize:11}}>{overdueInsts.length} parcela(s) em atraso</div>
+          </div>
+          <div style={{color:G.red,fontWeight:800,fontSize:15}}>{R(overdueAmt)}</div>
+        </div>
+      )}
+      {futureMonths.length===0&&overdueAmt===0&&<div style={{color:"#ffffff66",fontSize:13,padding:"6px 0"}}>Nenhuma parcela em aberto. 🎉</div>}
+      {futureMonths.map(mk=>{
+        const isCurrent=mk===todayMonth;
+        return(
+          <div key={mk} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"9px 12px",background:isCurrent?`${G.sky}12`:"#ffffff06",border:`1px solid ${isCurrent?G.sky+"40":G.bord}`,borderRadius:9,marginBottom:7}}>
+            <div>
+              <div style={{fontWeight:700,fontSize:13,color:isCurrent?G.sky:G.text,textTransform:"capitalize"}}>{fmtMonth(mk+"-01")}{isCurrent?" · mês atual":""}</div>
+              <div style={{color:"#ffffff66",fontSize:11}}>{futureMap[mk].count} parcela(s)</div>
+            </div>
+            <div style={{color:isCurrent?G.sky:G.text,fontWeight:800,fontSize:15}}>{R(futureMap[mk].amount)}</div>
+          </div>
+        );
+      })}
+    </Card>
 
     {/* Saídas do mês */}
     <Card>

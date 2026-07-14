@@ -844,9 +844,9 @@ function NewSale({products,customers,storeId,toast,allSales,allInstallments}){
           allInsts.push({
             sale_id:sale.id,store_id:storeId,customer_id:cId||null,
             number:i+1,amount:instVal,method:pay.method,
-            due_date:pay.method==="crediario"?dueDateDay(date,i+1,pay.diaVenc):addMonths(date,i),
+            due_date:pay.method==="crediario"?dueDateDay(date,i+1,pay.diaVenc):pay.method==="credit"?date:addMonths(date,i),
             paid:isPaidNow,
-            paid_at:isPaidNow?new Date().toISOString():null,
+            paid_at:isPaidNow?new Date(date+"T12:00:00").toISOString():null,
           });
         }
       }
@@ -1053,7 +1053,7 @@ function SalesList({sales,customers,installments,storeId,toast,storeName,storeSe
       for(let i=0;i<nParc;i++){
         newInsts.push({
           number:i+1,amount:instVal,method:pay.method,
-          due_date:pay.method==="crediario"?dueDateDay(editF.date,i+1,pay.diaVenc):addMonths(editF.date,i),
+          due_date:pay.method==="crediario"?dueDateDay(editF.date,i+1,pay.diaVenc):pay.method==="credit"?editF.date:addMonths(editF.date,i),
           paid:isPaidNow,
         });
       }
@@ -1099,7 +1099,7 @@ function SalesList({sales,customers,installments,storeId,toast,storeName,storeSe
         await sb.from("installments").insert(editF.insts.map(i=>({
           sale_id:editSale.id,store_id:editSale.store_id,customer_id:editF.customer_id||null,
           number:i.number,amount:i.amount,due_date:i.due_date,method:i.method,
-          paid:i.paid,paid_at:i.paid?new Date().toISOString():null,
+          paid:i.paid,paid_at:i.paid?new Date(editF.date+"T12:00:00").toISOString():null,
         })));
       }else{
         for(const inst of editF.insts){

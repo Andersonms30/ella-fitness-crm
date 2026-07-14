@@ -1040,6 +1040,28 @@ function SalesList({sales,customers,installments,storeId,toast,storeName,storeSe
     return p.taxaTipo==="val"?Math.min(+p.valor,+p.taxaVal):+p.valor*(+p.taxaVal/100);
   };
 
+  // Recalcula as parcelas do zero a partir das formas de pagamento atuais
+  // (a lista de Parcelas não se atualiza sozinha ao trocar método/nº de parcelas)
+  const recalcParcelas=()=>{
+    const pays=(editF.editPayments||[]).filter(p=>+p.valor>0);
+    const newInsts=[];
+    for(const pay of pays){
+      const isParc=pay.method==="credit"||pay.method==="crediario";
+      const nParc=isParc?(+pay.parc||1):1;
+      const instVal=+(+pay.valor/nParc).toFixed(2);
+      const isPaidNow=pay.method==="dinheiro"||pay.method==="pix"||pay.method==="debit";
+      for(let i=0;i<nParc;i++){
+        newInsts.push({
+          number:i+1,amount:instVal,method:pay.method,
+          due_date:pay.method==="crediario"?dueDateDay(editF.date,i+1,pay.diaVenc):addMonths(editF.date,i),
+          paid:isPaidNow,
+        });
+      }
+    }
+    setEditF({...editF,insts:newInsts});
+    toast("Parcelas recalculadas — confira antes de salvar","#38bdf8");
+  };
+
   const saveEdit=async()=>{
     if(!editF.items.length){toast("Adicione pelo menos um produto","#f87171");return;}
     const subTotal=editF.items.reduce((a,x)=>a+x.qty*Number(x.sale_price),0);
@@ -1071,10 +1093,20 @@ function SalesList({sales,customers,installments,storeId,toast,storeName,storeSe
         unit_price:it.sale_price,cost_price:it.cost_price,
       })));
 
-      for(const inst of editF.insts){
-        await sb.from("installments").update({
-          amount:inst.amount,due_date:inst.due_date,method:inst.method,
-        }).eq("id",inst.id);
+      const hasRecalculated=editF.insts.some(i=>!i.id);
+      if(hasRecalculated){
+        await sb.from("installments").delete().eq("sale_id",editSale.id);
+        await sb.from("installments").insert(editF.insts.map(i=>({
+          sale_id:editSale.id,store_id:editSale.store_id,customer_id:editF.customer_id||null,
+          number:i.number,amount:i.amount,due_date:i.due_date,method:i.method,
+          paid:i.paid,paid_at:i.paid?new Date().toISOString():null,
+        })));
+      }else{
+        for(const inst of editF.insts){
+          await sb.from("installments").update({
+            amount:inst.amount,due_date:inst.due_date,method:inst.method,
+          }).eq("id",inst.id);
+        }
       }
 
       toast("Venda atualizada! ✓");setEditSale(null);
@@ -1345,19 +1377,23 @@ function SalesList({sales,customers,installments,storeId,toast,storeName,storeSe
         </div>
 
         {/* Parcelas */}
-        {editF.insts?.length>0&&<div>
-          <div style={{fontWeight:700,fontSize:13,marginBottom:8}}>📅 Parcelas</div>
-          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+        <div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,flexWrap:"wrap",gap:6}}>
+            <div style={{fontWeight:700,fontSize:13}}>📅 Parcelas</div>
+            <Btn small variant="ghost" onClick={recalcParcelas}>🔄 Recalcular conforme pagamento</Btn>
+          </div>
+          <div style={{color:"#ffffff66",fontSize:11,marginBottom:9}}>Se você mudou a forma de pagamento ou o nº de parcelas acima, clique em recalcular — as parcelas não se atualizam sozinhas. Isso substitui a lista abaixo (parcelas pagas manualmente no crédito/crediário voltam a pendente; à vista continua marcado como pago).</div>
+          {editF.insts?.length>0&&<div style={{display:"flex",flexDirection:"column",gap:6}}>
             {editF.insts.map((inst,i)=>(
-              <div key={inst.id} style={{display:"grid",gridTemplateColumns:"auto 1fr 1fr 1fr",gap:8,alignItems:"center",background:"#ffffff06",borderRadius:9,padding:"8px 10px"}}>
+              <div key={inst.id||`new-${i}`} style={{display:"grid",gridTemplateColumns:"auto 1fr 1fr 1fr",gap:8,alignItems:"center",background:"#ffffff06",borderRadius:9,padding:"8px 10px"}}>
                 <div style={{width:26,height:26,borderRadius:"50%",background:inst.paid?G.green:G.violet,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,color:"#fff",flexShrink:0}}>{inst.number}</div>
                 <Inp label="" type="number" step="0.01" value={inst.amount} onChange={e=>setEditF({...editF,insts:editF.insts.map((x,j)=>j===i?{...x,amount:+e.target.value}:x)})}/>
                 <Inp label="" type="date" value={inst.due_date} onChange={e=>setEditF({...editF,insts:editF.insts.map((x,j)=>j===i?{...x,due_date:e.target.value}:x)})}/>
                 <Badge color={inst.paid?G.green:G.amber}>{inst.paid?"Pago":"Pendente"}</Badge>
               </div>
             ))}
-          </div>
-        </div>}
+          </div>}
+        </div>
 
         <Inp label="Observações" value={editF.notes} onChange={e=>setEditF({...editF,notes:e.target.value})} placeholder="Notas..."/>
 

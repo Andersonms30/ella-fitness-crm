@@ -770,6 +770,13 @@ function NewSale({products,customers,storeId,toast,allSales,allInstallments}){
   const rmPayment=i=>setPayments(payments.filter((_,idx)=>idx!==i));
   const updPayment=(i,field,val)=>setPayments(payments.map((p,idx)=>idx===i?{...p,[field]:val}:p));
 
+  // Taxa da maquininha (crédito): % ou R$, entra como custo e reduz a margem — não altera o que o cliente paga
+  const feeOf=p=>{
+    if(p.method!=="credit"||!(+p.valor>0)||!(+p.taxaVal>0))return 0;
+    return p.taxaTipo==="val"?Math.min(+p.valor,+p.taxaVal):+p.valor*(+p.taxaVal/100);
+  };
+  const totalFees=+payments.reduce((a,p)=>a+feeOf(p),0).toFixed(2);
+
   const selC=customers.find(c=>c.id===cId);
   const pendInst=cId?allInstallments.filter(i=>i.customer_id===cId&&!i.paid):[];
   const pendTotal=pendInst.reduce((a,i)=>a+Number(i.amount),0);
@@ -806,7 +813,7 @@ function NewSale({products,customers,storeId,toast,allSales,allInstallments}){
 
       const{data:sale,error:sErr}=await sb.from("sales").insert({
         store_id:storeId,customer_id:cId||null,date,
-        subtotal:subTotal,discount:discVal,total_cost:cmv,
+        subtotal:subTotal,discount:discVal,total_cost:+(cmv+totalFees).toFixed(2),
         total:totalBase,method:mainPay.method,
         installments:1,notes,
         payment_split:JSON.stringify(filledPay),
@@ -944,6 +951,16 @@ function NewSale({products,customers,storeId,toast,allSales,allInstallments}){
                 {["5","10","15","20","25","30"].map(d=><option key={d} value={d}>Dia {d}</option>)}
               </select>}
             </div>}
+            {pay.method==="credit"&&<div style={{marginTop:9,paddingTop:9,borderTop:`1px dashed ${col}30`,display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+              <span style={{fontSize:11,color:"#ffffff88",fontWeight:600}}>💳 Taxa da maquininha:</span>
+              <input type="number" min="0" step="0.01" placeholder={(pay.taxaTipo||"pct")==="val"?"Ex: 3,50":"Ex: 3"} value={pay.taxaVal||""} onChange={e=>updPayment(i,"taxaVal",e.target.value)} style={{...iS,width:75,fontSize:12}}/>
+              <div style={{display:"flex",background:G.bg,borderRadius:7,border:`1px solid ${G.bord2}`,overflow:"hidden",height:30,flexShrink:0}}>
+                {[["pct","%"],["val","R$"]].map(([k,l])=>(
+                  <button key={k} onClick={()=>updPayment(i,"taxaTipo",k)} style={{padding:"0 10px",border:"none",background:(pay.taxaTipo||"pct")===k?col:"transparent",color:(pay.taxaTipo||"pct")===k?"#fff":"#ffffffaa",fontWeight:600,fontSize:12,cursor:"pointer"}}>{l}</button>
+                ))}
+              </div>
+              {feeOf(pay)>0&&<span style={{color:G.amber,fontSize:11,fontWeight:700}}>custo -{R(feeOf(pay))}</span>}
+            </div>}
           </div>);
         })}
       </div>
@@ -961,9 +978,12 @@ function NewSale({products,customers,storeId,toast,allSales,allInstallments}){
     <Card style={{background:G.bg}}>
       <div style={{display:"flex",justifyContent:"space-between",color:"#ffffff88",fontSize:13,marginBottom:5}}><span>Subtotal</span><span style={{color:G.text}}>{R(subTotal)}</span></div>
       {discVal>0&&<div style={{display:"flex",justifyContent:"space-between",color:"#ffffff88",fontSize:13,marginBottom:5}}><span>Desconto</span><span style={{color:G.green}}>- {R(discVal)}</span></div>}
+      {totalFees>0&&<div style={{display:"flex",justifyContent:"space-between",color:"#ffffff88",fontSize:13,marginBottom:5}}><span>Taxa de cartão (custo)</span><span style={{color:G.amber}}>- {R(totalFees)}</span></div>}
       {inclPend&&pendTotal>0&&<div style={{display:"flex",justifyContent:"space-between",color:"#ffffff88",fontSize:13,marginBottom:5}}><span>Saldo anterior</span><span style={{color:G.rose}}>{R(pendTotal)}</span></div>}
       <Divider my={8}/>
-      <div style={{display:"flex",justifyContent:"space-between",fontWeight:900,fontSize:22,marginBottom:12}}><span>Total</span><span style={{color:G.pink}}>{R(totalBase)}</span></div>
+      <div style={{display:"flex",justifyContent:"space-between",fontWeight:900,fontSize:22,marginBottom:4}}><span>Total</span><span style={{color:G.pink}}>{R(totalBase)}</span></div>
+      {totalFees>0&&<div style={{fontSize:11,color:"#ffffff66",marginBottom:12}}>Cliente paga {R(totalBase)}. A taxa entra como custo e reduz a margem/lucro desta venda.</div>}
+      {!totalFees&&<div style={{marginBottom:12}}/>}
       <Btn full onClick={submit} disabled={saving||!items.length} variant="pink" style={{padding:"13px 0",fontSize:15}}>{saving?<Spin/>:"✅ Registrar Venda"}</Btn>
     </Card>
   </div>);
@@ -1014,6 +1034,12 @@ function SalesList({sales,customers,installments,storeId,toast,storeName,storeSe
     setEditSale(s);
   };
 
+  // Taxa da maquininha (crédito): mesma lógica da Nova Venda
+  const feeOf=p=>{
+    if(p.method!=="credit"||!(+p.valor>0)||!(+p.taxaVal>0))return 0;
+    return p.taxaTipo==="val"?Math.min(+p.valor,+p.taxaVal):+p.valor*(+p.taxaVal/100);
+  };
+
   const saveEdit=async()=>{
     if(!editF.items.length){toast("Adicione pelo menos um produto","#f87171");return;}
     const subTotal=editF.items.reduce((a,x)=>a+x.qty*Number(x.sale_price),0);
@@ -1027,13 +1053,14 @@ function SalesList({sales,customers,installments,storeId,toast,storeName,storeSe
     setEditSaving(true);
     try{
       const cmv=editF.items.reduce((a,x)=>a+x.qty*Number(x.cost_price),0);
+      const totalFees=pays.reduce((a,p)=>a+feeOf(p),0);
       const mainPay=pays.reduce((a,b)=>(+b.valor||0)>(+a.valor||0)?b:a,pays[0]);
 
       await sb.from("sales").update({
         customer_id:editF.customer_id||null,
         date:editF.date,notes:editF.notes,
         method:mainPay.method||editF.method,subtotal:subTotal,
-        discount:disc,total_cost:cmv,total,
+        discount:disc,total_cost:+(cmv+totalFees).toFixed(2),total,
         payment_split:JSON.stringify(pays),
       }).eq("id",editSale.id);
 
@@ -1302,6 +1329,16 @@ function SalesList({sales,customers,installments,storeId,toast,storeName,storeSe
                     {["5","10","15","20","25","30"].map(d=><option key={d} value={d}>Dia {d}</option>)}
                   </select>}
                 </div>}
+                {pay.method==="credit"&&<div style={{marginTop:8,paddingTop:8,borderTop:`1px dashed ${col}30`,display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                  <span style={{fontSize:11,color:"#ffffff88",fontWeight:600}}>💳 Taxa da maquininha:</span>
+                  <input type="number" min="0" step="0.01" placeholder={(pay.taxaTipo||"pct")==="val"?"Ex: 3,50":"Ex: 3"} value={pay.taxaVal||""} onChange={e=>updPay("taxaVal",e.target.value)} style={{...iS,width:75,fontSize:12}}/>
+                  <div style={{display:"flex",background:G.bg,borderRadius:7,border:`1px solid ${G.bord2}`,overflow:"hidden",height:30,flexShrink:0}}>
+                    {[["pct","%"],["val","R$"]].map(([k,l])=>(
+                      <button key={k} onClick={()=>updPay("taxaTipo",k)} style={{padding:"0 10px",border:"none",background:(pay.taxaTipo||"pct")===k?col:"transparent",color:(pay.taxaTipo||"pct")===k?"#fff":"#ffffffaa",fontWeight:600,fontSize:12,cursor:"pointer"}}>{l}</button>
+                    ))}
+                  </div>
+                  {feeOf(pay)>0&&<span style={{color:G.amber,fontSize:11,fontWeight:700}}>custo -{R(feeOf(pay))}</span>}
+                </div>}
               </div>);
             })}
           </div>
@@ -1329,6 +1366,7 @@ function SalesList({sales,customers,installments,storeId,toast,storeName,storeSe
           const editTotal=Math.max(0,editF.items.reduce((a,x)=>a+x.qty*Number(x.sale_price),0)-(editF.discount||0));
           const editPaySum=(editF.editPayments||[]).reduce((a,p)=>a+(+p.valor||0),0);
           const editRemainder=Math.max(0,+(editTotal-editPaySum).toFixed(2));
+          const editFees=(editF.editPayments||[]).reduce((a,p)=>a+feeOf(p),0);
           return(<div style={{background:G.bg,borderRadius:10,padding:"10px 14px",display:"flex",flexDirection:"column",gap:5}}>
             <div style={{display:"flex",justifyContent:"space-between",fontSize:13}}>
               <span style={{color:"#ffffff88"}}>Total da venda</span>
@@ -1338,6 +1376,10 @@ function SalesList({sales,customers,installments,storeId,toast,storeName,storeSe
               <span style={{color:"#ffffff88"}}>Soma dos pagamentos</span>
               <span style={{color:G.green,fontWeight:700}}>{R(editPaySum)}</span>
             </div>
+            {editFees>0&&<div style={{display:"flex",justifyContent:"space-between",fontSize:13}}>
+              <span style={{color:"#ffffff88"}}>Taxa de cartão (custo)</span>
+              <span style={{color:G.amber,fontWeight:700}}>- {R(editFees)}</span>
+            </div>}
             <div style={{height:1,background:G.bord,margin:"2px 0"}}/>
             {editRemainder>0.01
               ?<div style={{display:"flex",justifyContent:"space-between",fontSize:13,fontWeight:700,color:G.amber}}>

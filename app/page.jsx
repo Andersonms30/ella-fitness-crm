@@ -1020,7 +1020,7 @@ function SalesList({sales,customers,installments,storeId,toast,storeName,storeSe
       date:s.date,
       notes:s.notes||"",
       method:s.method||"pix",
-      discount:s.discount||0,
+      discount:s.discount>0?String(s.discount):"",
       editPayments:existingPayments,
       items:s.items.map(it=>({
         pid:it.product_id,name:it.product_name,
@@ -1289,7 +1289,7 @@ function SalesList({sales,customers,installments,storeId,toast,storeName,storeSe
 
         {/* Desconto + Pagamentos múltiplos */}
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-          <Inp label="Desconto (R$)" type="number" min="0" step="0.01" value={editF.discount} onChange={e=>setEditF({...editF,discount:+e.target.value||0})}/>
+          <Inp label="Desconto (R$)" type="number" min="0" step="0.01" placeholder="0,00" value={editF.discount} onChange={e=>setEditF({...editF,discount:e.target.value})}/>
           <div style={{background:"#ffffff06",borderRadius:9,padding:"9px 12px",display:"flex",flexDirection:"column",gap:2}}>
             <div style={{color:"#ffffffaa",fontSize:10,textTransform:"uppercase",fontWeight:600}}>Total</div>
             <div style={{color:G.pink,fontWeight:900,fontSize:18}}>{R(Math.max(0,editF.items.reduce((a,x)=>a+x.qty*Number(x.sale_price),0)-(editF.discount||0)))}</div>

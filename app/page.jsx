@@ -839,7 +839,7 @@ function NewSale({products,customers,storeId,toast,allSales,allInstallments}){
         const isParc=pay.method==="credit"||pay.method==="crediario";
         const nParc=isParc?pay.parc:1;
         const instVal=+(+pay.valor/nParc).toFixed(2);
-        const isPaidNow=pay.method==="dinheiro"||pay.method==="pix"||pay.method==="debit";
+        const isPaidNow=pay.method==="dinheiro"||pay.method==="pix"||pay.method==="debit"||pay.method==="credit";
         for(let i=0;i<nParc;i++){
           allInsts.push({
             sale_id:sale.id,store_id:storeId,customer_id:cId||null,
@@ -1049,7 +1049,7 @@ function SalesList({sales,customers,installments,storeId,toast,storeName,storeSe
       const isParc=pay.method==="credit"||pay.method==="crediario";
       const nParc=isParc?(+pay.parc||1):1;
       const instVal=+(+pay.valor/nParc).toFixed(2);
-      const isPaidNow=pay.method==="dinheiro"||pay.method==="pix"||pay.method==="debit";
+      const isPaidNow=pay.method==="dinheiro"||pay.method==="pix"||pay.method==="debit"||pay.method==="credit";
       for(let i=0;i<nParc;i++){
         newInsts.push({
           number:i+1,amount:instVal,method:pay.method,
@@ -1382,7 +1382,7 @@ function SalesList({sales,customers,installments,storeId,toast,storeName,storeSe
             <div style={{fontWeight:700,fontSize:13}}>📅 Parcelas</div>
             <Btn small variant="ghost" onClick={recalcParcelas}>🔄 Recalcular conforme pagamento</Btn>
           </div>
-          <div style={{color:"#ffffff66",fontSize:11,marginBottom:9}}>Se você mudou a forma de pagamento ou o nº de parcelas acima, clique em recalcular — as parcelas não se atualizam sozinhas. Isso substitui a lista abaixo (parcelas pagas manualmente no crédito/crediário voltam a pendente; à vista continua marcado como pago).</div>
+          <div style={{color:"#ffffff66",fontSize:11,marginBottom:9}}>Se você mudou a forma de pagamento ou o nº de parcelas acima, clique em recalcular — as parcelas não se atualizam sozinhas. Isso substitui a lista abaixo (Dinheiro/PIX/Débito/Crédito entram já quitados — a loja recebe à vista do adquirente; só Crediário fica pendente).</div>
           {editF.insts?.length>0&&<div style={{display:"flex",flexDirection:"column",gap:6}}>
             {editF.insts.map((inst,i)=>(
               <div key={inst.id||`new-${i}`} style={{display:"grid",gridTemplateColumns:"auto 1fr 1fr 1fr",gap:8,alignItems:"center",background:"#ffffff06",borderRadius:9,padding:"8px 10px"}}>

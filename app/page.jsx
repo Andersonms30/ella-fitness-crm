@@ -271,12 +271,13 @@ function InstRow({inst,custName,custPhone,onPay,storeName,showWA=true}){
   const overdue = !inst.paid && inst.due_date < TODAY();
   const dueToday= !inst.paid && inst.due_date === TODAY();
   const col = inst.paid?G.green:overdue?G.red:dueToday?G.amber:G.muted+"88";
+  const isCreditSummary = inst.method==="credit";
   return(
     <div style={{display:"flex",alignItems:"center",gap:9,background:inst.paid?"#34d39910":overdue?"#f8717110":dueToday?"#fbbf2410":"#ffffff07",border:`1px solid ${inst.paid?G.green+"30":overdue?G.red+"30":dueToday?G.amber+"30":G.bord}`,borderRadius:9,padding:"9px 12px"}}>
-      <div style={{width:24,height:24,borderRadius:"50%",flexShrink:0,background:col,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,color:"#fff"}}>{inst.number}</div>
+      <div style={{width:24,height:24,borderRadius:"50%",flexShrink:0,background:col,display:"flex",alignItems:"center",justifyContent:"center",fontSize:isCreditSummary?9:11,fontWeight:800,color:"#fff"}}>{isCreditSummary?"💳":inst.number}</div>
       <div style={{flex:1}}>
         <div style={{fontSize:13,fontWeight:700,color:inst.paid?G.green:overdue?G.red:G.text}}>{R(inst.amount)}</div>
-        <div style={{fontSize:11,color:G.muted}}>Venc: {fmtD(inst.due_date)}{inst.paid_at?` · Pago em ${fmtD(inst.paid_at.slice(0,10))}`:"" }</div>
+        <div style={{fontSize:11,color:G.muted}}>{isCreditSummary?`Cartão em ${inst.number}x · Recebido em ${fmtD(inst.due_date)}`:`Venc: ${fmtD(inst.due_date)}${inst.paid_at?` · Pago em ${fmtD(inst.paid_at.slice(0,10))}`:""}`}</div>
       </div>
       <Badge color={inst.paid?G.green:overdue?G.red:dueToday?G.amber:G.violet}>{inst.paid?"Pago":overdue?"Vencida":dueToday?"Hoje":"Pendente"}</Badge>
       {!inst.paid && onPay && <Btn small variant="success" onClick={()=>onPay(inst.id)}>✓</Btn>}
@@ -836,15 +837,26 @@ function NewSale({products,customers,storeId,toast,allSales,allInstallments}){
       // Gerar parcelas para cada forma de pagamento
       const allInsts=[];
       for(const pay of filledPay){
-        const isParc=pay.method==="credit"||pay.method==="crediario";
+        if(pay.method==="credit"){
+          // Crédito: linha única com o valor total, já quitada (loja recebe à vista do adquirente).
+          // "number" guarda em quantas vezes ficou parcelado no cartão da cliente (só informativo).
+          allInsts.push({
+            sale_id:sale.id,store_id:storeId,customer_id:cId||null,
+            number:+pay.parc||1,amount:+(+pay.valor).toFixed(2),method:pay.method,
+            due_date:date,paid:true,
+            paid_at:new Date(date+"T12:00:00").toISOString(),
+          });
+          continue;
+        }
+        const isParc=pay.method==="crediario";
         const nParc=isParc?pay.parc:1;
         const instVal=+(+pay.valor/nParc).toFixed(2);
-        const isPaidNow=pay.method==="dinheiro"||pay.method==="pix"||pay.method==="debit"||pay.method==="credit";
+        const isPaidNow=pay.method==="dinheiro"||pay.method==="pix"||pay.method==="debit";
         for(let i=0;i<nParc;i++){
           allInsts.push({
             sale_id:sale.id,store_id:storeId,customer_id:cId||null,
             number:i+1,amount:instVal,method:pay.method,
-            due_date:pay.method==="crediario"?dueDateDay(date,i+1,pay.diaVenc):pay.method==="credit"?date:addMonths(date,i),
+            due_date:pay.method==="crediario"?dueDateDay(date,i+1,pay.diaVenc):date,
             paid:isPaidNow,
             paid_at:isPaidNow?new Date(date+"T12:00:00").toISOString():null,
           });
@@ -1046,14 +1058,22 @@ function SalesList({sales,customers,installments,storeId,toast,storeName,storeSe
     const pays=(editF.editPayments||[]).filter(p=>+p.valor>0);
     const newInsts=[];
     for(const pay of pays){
-      const isParc=pay.method==="credit"||pay.method==="crediario";
+      if(pay.method==="credit"){
+        // Crédito: linha única, valor total, já quitada — "number" guarda o Nx do cartão (informativo)
+        newInsts.push({
+          number:+pay.parc||1,amount:+(+pay.valor).toFixed(2),method:pay.method,
+          due_date:editF.date,paid:true,
+        });
+        continue;
+      }
+      const isParc=pay.method==="crediario";
       const nParc=isParc?(+pay.parc||1):1;
       const instVal=+(+pay.valor/nParc).toFixed(2);
-      const isPaidNow=pay.method==="dinheiro"||pay.method==="pix"||pay.method==="debit"||pay.method==="credit";
+      const isPaidNow=pay.method==="dinheiro"||pay.method==="pix"||pay.method==="debit";
       for(let i=0;i<nParc;i++){
         newInsts.push({
           number:i+1,amount:instVal,method:pay.method,
-          due_date:pay.method==="crediario"?dueDateDay(editF.date,i+1,pay.diaVenc):pay.method==="credit"?editF.date:addMonths(editF.date,i),
+          due_date:pay.method==="crediario"?dueDateDay(editF.date,i+1,pay.diaVenc):editF.date,
           paid:isPaidNow,
         });
       }
@@ -1188,7 +1208,7 @@ function SalesList({sales,customers,installments,storeId,toast,storeName,storeSe
     <div class="instTitle">📅 Parcelas</div>
     <table>
       ${instSorted.map(inst=>`<tr>
-        <td>${inst.number}ª · Venc ${fmtD(inst.due_date)}</td>
+        <td>${inst.method==="credit"?`Cartão em ${inst.number}x`:`${inst.number}ª · Venc ${fmtD(inst.due_date)}`}</td>
         <td style="text-align:right" class="${inst.paid?"paid":"pend"}">${R(inst.amount)}${inst.paid?" ✓ Paga":""}</td>
       </tr>`).join("")}
     </table>
@@ -1386,7 +1406,7 @@ function SalesList({sales,customers,installments,storeId,toast,storeName,storeSe
           {editF.insts?.length>0&&<div style={{display:"flex",flexDirection:"column",gap:6}}>
             {editF.insts.map((inst,i)=>(
               <div key={inst.id||`new-${i}`} style={{display:"grid",gridTemplateColumns:"auto 1fr 1fr 1fr",gap:8,alignItems:"center",background:"#ffffff06",borderRadius:9,padding:"8px 10px"}}>
-                <div style={{width:26,height:26,borderRadius:"50%",background:inst.paid?G.green:G.violet,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,color:"#fff",flexShrink:0}}>{inst.number}</div>
+                <div style={{width:26,height:26,borderRadius:"50%",background:inst.paid?G.green:G.violet,display:"flex",alignItems:"center",justifyContent:"center",fontSize:inst.method==="credit"?9:11,fontWeight:800,color:"#fff",flexShrink:0}}>{inst.method==="credit"?`${inst.number}x`:inst.number}</div>
                 <Inp label="" type="number" step="0.01" value={inst.amount} onChange={e=>setEditF({...editF,insts:editF.insts.map((x,j)=>j===i?{...x,amount:+e.target.value}:x)})}/>
                 <Inp label="" type="date" value={inst.due_date} onChange={e=>setEditF({...editF,insts:editF.insts.map((x,j)=>j===i?{...x,due_date:e.target.value}:x)})}/>
                 <Badge color={inst.paid?G.green:G.amber}>{inst.paid?"Pago":"Pendente"}</Badge>
